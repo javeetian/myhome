@@ -25,8 +25,8 @@ WORK_V2.md §50 的检查清单**不在原文档勾选**，状态统一维护在
 ```text
 Phase 0  环境与工程初始化      ✅ 完成 (2026-09-08)
 Phase 1  BLE Transport         ✅ 代码完成，真机验收 ⏸ 待硬件
-Phase 2  Frame                 ⬜ 未开始 (下一目标)
-Phase 3  Fragment              ⬜ 未开始
+Phase 2  Frame + CRC           ✅ 完成 (2026-09-08，纯 Dart 无硬件依赖)
+Phase 3  Fragment              ⬜ 未开始 (下一目标，纯 Dart)
 Phase 4  ACK / Retry / Queue   ⬜ 未开始
 Phase 5  Device Protocol       ⬜ 未开始
 Phase 6  DeviceClient          ⬜ 未开始
@@ -45,15 +45,18 @@ Phase 12 Security / Production ⬜ 未开始
 2. 加入 Riverpod            ✅
 3. 加入 BLE Plugin          ✅
 4. 实现 BleTransport        ✅ (代码 + 单测)
-5. 建立 ESP32/AC7014 GATT   ⏸ 需要硬件 (见 §3)
+5. 建立 ESP32/AC7014 GATT   ⏸ 需要硬件 (见 §2)
 6. Flutter ↔ Device 双向通信 ⏸ 需要硬件；回环 echo 单测已就绪
+7. 实现 BLE Frame           ✅
+8. 实现 CRC                ✅
 ```
 
 ---
 
 # 2. ⚠️ 硬件依赖（阻塞项）
 
-> **当前所有未完成项的根因都是缺少真实 BLE 硬件。**
+> **Phase 1 真机验收与设备固件相关项阻塞于缺少真实 BLE 硬件。**
+> Phase 2/3/4 (Frame / Fragment / ACK) 为纯 Dart，不受硬件阻塞。
 
 按 WORK_V2 §30，MVP 至少需要：
 
@@ -157,19 +160,62 @@ ESP32 开发板 ×1
 
 ---
 
-# 5. 下一步：Phase 2 Transport Frame
+# 5. Phase 2 执行记录 ✅
 
-```text
-目标 (WORK_V2 §7)：
-  VER/TYPE/FLAGS/SEQ/LENGTH/PAYLOAD + CRC16 的 Frame 编解码
-  测试：正常/空 Payload/最大 Payload/CRC 错误/Length 错误/Version 错误/非法 Type/SEQ 溢出
-```
+**日期：** 2026-09-08
+**硬件依赖：** 无（Frame 编解码为纯 Dart，单测完全覆盖 §7.5 矩阵）
 
-无硬件阻塞，可立即开始。
+## 5.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/protocol/crc16.dart | §7.3 | CRC-16/CCITT-FALSE（poly 0x1021, init 0xFFFF, 无反射）；已知答案锚点 "123456789" → 0x29B1；支持增量计算 |
+| lib/protocol/ble_frame.dart | §7.2 | BleFrame encode/decode/validate；头部 7B (VER+TYPE+FLAGS+SEQ+LENGTH，大端)；FrameType 合法值注册；FrameException |
+| lib/protocol/frame_sequencer.dart | §7.4 | SEQ 生成器，2 字节回绕 (65535 → 0) |
+
+## 5.2 设计决策（固件侧需对齐）
+
+- 字节序：SEQ / LENGTH / CRC 全部大端
+- CRC 覆盖 Header + Payload（不含 CRC 字段本身）
+- 最大 Payload 65535（LENGTH 2 字节上限）
+- decode 为严格定长（恰好一帧）；粘包/半包归 Phase 3 Assembler
+- 校验顺序：长度 → CRC → 字段合法性（Version/Type）；CRC 错误优先于字段错误
+- FrameType 当前合法值：0x01-0x05（§10.1 数据帧预注册）、0x10/0x11（§9.1 ACK/NACK）；Phase 4/5 扩展
+- SEQ 仅 Transport 使用，禁止作业务 Request ID（§7.4）
+
+## 5.3 测试（§7.5 矩阵全部覆盖）
+
+| 用例 | 结果 |
+|---|---|
+| 正常 Frame 全字段往返 | ✅ |
+| 空 Payload | ✅ |
+| 最大 Payload 65535 字节 | ✅ |
+| CRC 错误（Payload 翻转 / 头部翻转） | ✅ |
+| Length 错误（声明不符 / 截断 / 不足头部） | ✅ |
+| Version 错误（CRC 合法的坏版本帧） | ✅ |
+| 非法 Type（CRC 合法的未注册 TYPE 帧） | ✅ |
+| SEQ 溢出（65535 → 0 回绕） | ✅ |
+| CRC16 已知答案 ×3 + 单字节翻转检测 + 增量一致性 | ✅ |
+
+全套单测 34/34 通过，flutter analyze 无问题。
 
 ---
 
-# 6. 执行规则备忘（WORK_V2 §48/§49）
+# 6. 下一步：Phase 3 Fragment
+
+```text
+目标 (WORK_V2 §8)：
+  应用消息 (可超 MTU) → Fragmenter → Fragment[] → Frame → BLE
+  BLE → Frame → Assembler → 完整消息
+  字段：MSG_ID / INDEX / TOTAL / LENGTH / DATA
+  异常：缺 Fragment / 重复 / 乱序 / 错误 TOTAL / 错误 LENGTH / 超时
+```
+
+纯 Dart，无硬件阻塞，可立即开始。
+
+---
+
+# 7. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支
