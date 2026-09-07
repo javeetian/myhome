@@ -29,8 +29,8 @@ Phase 2  Frame + CRC           ✅ 完成 (2026-09-08，纯 Dart 无硬件依赖
 Phase 3  Fragment              ✅ 完成 (2026-09-08，纯 Dart)
 Phase 4  ACK / Retry / Queue   ✅ 完成 (2026-09-08，纯 Dart)
 Phase 5  Device Protocol       ✅ 完成 (2026-09-08，纯 Dart)
-Phase 6  DeviceClient          ⬜ 未开始 (下一目标，纯 Dart)
-Phase 7  Riverpod              ⬜ 未开始
+Phase 6  DeviceClient          ✅ 完成 (2026-09-08，纯 Dart)
+Phase 7  Riverpod              ⬜ 未开始 (下一目标)
 Phase 8  UI Adapter            ⬜ 未开始
 Phase 9  WebView Runtime       ⬜ 未开始
 Phase 10 Manifest / UI Package ⬜ 未开始
@@ -53,6 +53,7 @@ Phase 12 Security / Production ⬜ 未开始
 10. 实现 ACK               ✅
 11. 实现 Retry             ✅
 12. 实现 Device Protocol   ✅ (消息模型 + JSON Codec；DeviceClient 下一阶段)
+13. 实现 DeviceClient      ✅
 ```
 
 ---
@@ -309,21 +310,60 @@ ESP32 开发板 ×1
 
 ---
 
-# 9. 下一步：Phase 6 DeviceClient
+# 9. Phase 6 执行记录 ✅
 
-```text
-目标 (WORK_V2 §11)：
-  DeviceClient：connect/disconnect/command/events/patches/getState (§11.1)
-  只知道 Command/Response/Event/State/Patch，不知道 HTML/WebView (§11.2)
-  不直接依赖 BLE Plugin：DeviceClient → BleTransport → Plugin (§11.3)
-  可用 MockBleTransport 脱离真实 BLE 单测 (§11.4)
-```
+**日期：** 2026-09-08
+**硬件依赖：** 无（Mock 传输 (FakeBleDevice) 全链路测试，§11.4）
 
-底层已就绪 (ReliableChannel + JsonCodec)，纯 Dart，无硬件阻塞。
+## 9.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/device/device_client.dart | §11.1 | DeviceClient：connect/disconnect/command/events/patches/states/getState；request_id 与响应配对；业务错误正常返回、传输失败抛异常 |
+| lib/protocol/fragment.dart | 升级 | Assembler 追踪帧类型：onComplete 携带 frameType；同消息分片 TYPE 不一致 → 丢弃 |
+| lib/protocol/reliable_channel.dart | 升级 | messages 流改发 IncomingMessage(msgId/frameType/data) |
+
+## 9.2 分层验证（§11.2/§11.3）
+
+- DeviceClient 零 import BLE Plugin：只依赖 BleTransport 抽象 ✓
+- 不接触 HTML/WebView/DOM，只处理 Command/Response/Event/State/Patch ✓
+- 依赖链：DeviceClient → ReliableChannel → BleTransport → Plugin ✓
+
+## 9.3 语义约定
+
+- command()：业务错误 (status='error') 作为正常返回值；ACK 超时/NACK/断开/响应超时抛异常
+- getState() 返回最近缓存状态；主动拉取 STATE 在 Phase 11 §16.6
+- 未知 request_id 的响应忽略；设备不应主动发命令 (忽略)
+- 协议解码失败的入站消息丢弃 (兜底)
+
+## 9.4 测试（§11.4 全部脱离真实 BLE）
+
+| 用例 | 结果 |
+|---|---|
+| command 响应配对 / request_id 自增 / 业务错误正常返回 | ✅ |
+| 响应超时 / 传输 ACK 超时异常传播 / 未知 request_id 忽略 | ✅ |
+| events / patches / getState 缓存 / 未收状态抛错 | ✅ |
+| 未连接 command 抛错 / disconnect 失败所有进行中命令 | ✅ |
+| 全套 101/101 通过 (连续两轮) | ✅ |
 
 ---
 
-# 10. 执行规则备忘（WORK_V2 §48/§49）
+# 10. 下一步：Phase 7 Riverpod
+
+```text
+目标 (WORK_V2 §12)：
+  bleTransportProvider / deviceClientProvider / deviceSessionProvider
+  deviceManagerProvider / deviceStateProvider / deviceManifestProvider
+  uiRuntimeProvider / uiCacheProvider
+  连接状态生命周期：disconnected → scanning → connecting → ... → connected (§12.6)
+  Riverpod 不管 Frame/CRC/Fragment/Codec/Transport (§12.2)
+```
+
+可立即开始。
+
+---
+
+# 11. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支

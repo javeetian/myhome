@@ -155,7 +155,9 @@ void main() {
     final received = channel.messages.first;
     device.sendToApp(data);
 
-    expect(await received.timeout(const Duration(seconds: 2)), data);
+    final message = await received.timeout(const Duration(seconds: 2));
+    expect(message.data, data);
+    expect(message.frameType, FrameType.command);
     await channel.dispose();
     await device.dispose();
   });

@@ -5,6 +5,19 @@ import 'ble_frame.dart';
 import 'fragment.dart';
 import 'frame_stream_decoder.dart';
 
+/// 组装完成的入站消息 (含帧类型，供上层 Codec 按类型解码 §10.1)。
+class IncomingMessage {
+  const IncomingMessage({
+    required this.msgId,
+    required this.frameType,
+    required this.data,
+  });
+
+  final int msgId;
+  final int frameType;
+  final List<int> data;
+}
+
 /// 可靠发送通道 (WORK_V2 §9)：ACK / Retry / CommandQueue。
 ///
 /// 发送方向 (§9.1/9.2/9.3/9.5)：
@@ -46,8 +59,8 @@ class ReliableChannel {
 
   final FragmentAssembler _assembler;
   final FrameStreamDecoder _decoder = FrameStreamDecoder();
-  final StreamController<List<int>> _messages =
-      StreamController<List<int>>.broadcast();
+  final StreamController<IncomingMessage> _messages =
+      StreamController<IncomingMessage>.broadcast();
   final List<_PendingSend> _queue = <_PendingSend>[];
 
   _PendingSend? _inflight;
@@ -56,7 +69,7 @@ class ReliableChannel {
   int _nextMsgId = 0;
 
   /// 组装完成的入站消息流。
-  Stream<List<int>> get messages => _messages.stream;
+  Stream<IncomingMessage> get messages => _messages.stream;
 
   /// 发送失败回调 (msgId, 错误)。
   void Function(int msgId, Object error)? onSendError;
@@ -70,9 +83,11 @@ class ReliableChannel {
       return;
     }
     _started = true;
-    _assembler.onComplete = (msgId, message) {
+    _assembler.onComplete = (msgId, frameType, message) {
       if (!_messages.isClosed) {
-        _messages.add(message);
+        _messages.add(
+          IncomingMessage(msgId: msgId, frameType: frameType, data: message),
+        );
       }
     };
     _assembler.onDiscard = (msgId, reason) {

@@ -99,7 +99,7 @@ void main() {
         final assembler = FragmentAssembler();
         final completed = <List<int>>[];
 
-        assembler.onComplete = (_, msg) => completed.add(msg);
+        assembler.onComplete = (_, _, msg) => completed.add(msg);
         for (final frame in fragmenter.fragment(42, data)) {
           assembler.add(frame);
         }
@@ -117,7 +117,7 @@ void main() {
       final assembler = FragmentAssembler();
       final completed = <List<int>>[];
 
-      assembler.onComplete = (_, msg) => completed.add(msg);
+      assembler.onComplete = (_, _, msg) => completed.add(msg);
       for (final frame in shuffled) {
         assembler.add(frame);
       }
@@ -135,7 +135,7 @@ void main() {
       final assembler = FragmentAssembler();
       final completed = <int, List<int>>{};
 
-      assembler.onComplete = (id, msg) => completed[id] = msg;
+      assembler.onComplete = (id, _, msg) => completed[id] = msg;
       final interleaved = <BleFrame>[];
       for (var i = 0; i < max(framesA.length, framesB.length); i++) {
         if (i < framesA.length) interleaved.add(framesA[i]);
@@ -157,7 +157,7 @@ void main() {
       final completed = <List<int>>[];
       final discarded = <String>[];
 
-      assembler.onComplete = (_, msg) => completed.add(msg);
+      assembler.onComplete = (_, _, msg) => completed.add(msg);
       assembler.onDiscard = (_, reason) => discarded.add(reason);
       assembler.add(frames[0]);
       assembler.add(frames[0]); // 重复
@@ -192,7 +192,7 @@ void main() {
     test('超时丢弃后同 MSG_ID 可以重新开始组装', () async {
       final assembler = FragmentAssembler(timeout: const Duration(milliseconds: 50));
       final completed = <List<int>>[];
-      assembler.onComplete = (_, msg) => completed.add(msg);
+      assembler.onComplete = (_, _, msg) => completed.add(msg);
 
       assembler.add(fragFrame(msgId: 9, index: 0, total: 2, data: <int>[1]));
       await Future<void>.delayed(const Duration(milliseconds: 120)); // 超时丢弃
@@ -224,6 +224,27 @@ void main() {
       assembler.add(fragFrame(msgId: 1, index: 0, total: 2, length: 99, data: <int>[1]));
 
       expect(discarded, <(int?, String)>[(1, '错误 LENGTH')]);
+      assembler.dispose();
+    });
+
+    test('TYPE 不一致: 同消息分片帧类型不同 → 丢弃', () {
+      final assembler = FragmentAssembler();
+      final discarded = <(int?, String)>[];
+      assembler.onDiscard = (id, reason) => discarded.add((id, reason));
+
+      // 第 1 片 type=command，第 2 片 type=event
+      final first = fragFrame(msgId: 1, index: 0, total: 2, data: <int>[1]);
+      final second = fragFrame(msgId: 1, index: 1, total: 2, data: <int>[2]);
+      assembler.add(BleFrame(
+        version: first.version,
+        type: FrameType.event,
+        flags: first.flags,
+        sequence: first.sequence,
+        payload: first.payload,
+      ));
+      assembler.add(second);
+
+      expect(discarded, <(int?, String)>[(1, 'TYPE 不一致')]);
       assembler.dispose();
     });
 

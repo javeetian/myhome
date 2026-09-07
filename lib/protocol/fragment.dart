@@ -145,7 +145,8 @@ class FragmentAssembler {
   final Duration timeout;
 
   /// 消息组装完成回调 (可变，可在构造后赋值)。
-  void Function(int msgId, List<int> message)? onComplete;
+  /// 携带帧类型：同一条消息的 Fragment 必须 TYPE 一致，否则丢弃。
+  void Function(int msgId, int frameType, List<int> message)? onComplete;
 
   /// 消息被丢弃回调 (msgId 可能为 null：Payload 短于 Fragment 头)。
   void Function(int? msgId, String reason)? onDiscard;
@@ -182,11 +183,15 @@ class FragmentAssembler {
       _assemblies[header.msgId] = _Assembly(
         msgId: header.msgId,
         total: header.total,
+        frameType: frame.type,
         timeout: timeout,
         onTimeout: _discard,
       );
     } else if (assembly.total != header.total) {
       _discard(header.msgId, '错误 TOTAL');
+      return;
+    } else if (assembly.frameType != frame.type) {
+      _discard(header.msgId, 'TYPE 不一致');
       return;
     }
 
@@ -206,7 +211,7 @@ class FragmentAssembler {
       }
       _assemblies.remove(header.msgId);
       current.cancel();
-      onComplete?.call(header.msgId, message);
+      onComplete?.call(header.msgId, current.frameType, message);
       return;
     }
     current.resetTimer();
@@ -234,6 +239,7 @@ class _Assembly {
   _Assembly({
     required this.msgId,
     required this.total,
+    required this.frameType,
     required Duration timeout,
     required void Function(int, String) onTimeout,
   })  : _timeout = timeout,
@@ -243,6 +249,10 @@ class _Assembly {
 
   final int msgId;
   final int total;
+
+  /// 该消息的帧类型 (首片确定，后续分片必须一致)。
+  final int frameType;
+
   final Duration _timeout;
   final void Function(int, String) _onTimeout;
   final Map<int, List<int>> parts = <int, List<int>>{};
