@@ -10,11 +10,13 @@ class FrameException implements Exception {
   String toString() => 'FrameException: $message';
 }
 
-/// 帧 TYPE 合法值 (WORK_V2 §7.5「非法 Type」校验)。
+/// 帧 TYPE 合法值 (WORK_V2 §7.5「非法 Type」校验 / §10.1 注册表)。
 ///
-/// 当前注册 (Phase 4/5 会扩展)：
-///   0x01-0x05  数据帧 (§10.1 COMMAND/RESPONSE/EVENT/STATE/PATCH)
+/// 当前注册：
+///   0x01-0x05  业务帧 (§10.1 COMMAND/RESPONSE/EVENT/STATE/PATCH)
 ///   0x10/0x11  ACK / NACK (§9.1)
+///   0x20-0x23  HELLO / HELLO_ACK / PING / PONG (§15.3 UI 下载流程)
+///   0x30/0x31  RESOURCE_REQUEST / RESOURCE_RESPONSE (§27 Resource 流程)
 class FrameType {
   FrameType._();
 
@@ -25,6 +27,12 @@ class FrameType {
   static const int patch = 0x05;
   static const int ack = 0x10;
   static const int nack = 0x11;
+  static const int hello = 0x20;
+  static const int helloAck = 0x21;
+  static const int ping = 0x22;
+  static const int pong = 0x23;
+  static const int resourceRequest = 0x30;
+  static const int resourceResponse = 0x31;
 
   static const Set<int> valid = <int>{
     command,
@@ -34,6 +42,12 @@ class FrameType {
     patch,
     ack,
     nack,
+    hello,
+    helloAck,
+    ping,
+    pong,
+    resourceRequest,
+    resourceResponse,
   };
 
   static bool isValid(int type) => valid.contains(type);

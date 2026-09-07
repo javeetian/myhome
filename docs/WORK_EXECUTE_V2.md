@@ -28,8 +28,8 @@ Phase 1  BLE Transport         ✅ 代码完成，真机验收 ⏸ 待硬件
 Phase 2  Frame + CRC           ✅ 完成 (2026-09-08，纯 Dart 无硬件依赖)
 Phase 3  Fragment              ✅ 完成 (2026-09-08，纯 Dart)
 Phase 4  ACK / Retry / Queue   ✅ 完成 (2026-09-08，纯 Dart)
-Phase 5  Device Protocol       ⬜ 未开始 (下一目标，纯 Dart)
-Phase 6  DeviceClient          ⬜ 未开始
+Phase 5  Device Protocol       ✅ 完成 (2026-09-08，纯 Dart)
+Phase 6  DeviceClient          ⬜ 未开始 (下一目标，纯 Dart)
 Phase 7  Riverpod              ⬜ 未开始
 Phase 8  UI Adapter            ⬜ 未开始
 Phase 9  WebView Runtime       ⬜ 未开始
@@ -52,6 +52,7 @@ Phase 12 Security / Production ⬜ 未开始
 9. 实现 Fragment           ✅
 10. 实现 ACK               ✅
 11. 实现 Retry             ✅
+12. 实现 Device Protocol   ✅ (消息模型 + JSON Codec；DeviceClient 下一阶段)
 ```
 
 ---
@@ -273,20 +274,56 @@ ESP32 开发板 ×1
 
 ---
 
-# 8. 下一步：Phase 5 Device Protocol
+# 8. Phase 5 执行记录 ✅
 
-```text
-目标 (WORK_V2 §10)：
-  业务 TYPE 已预注册 (0x01-0x05)，本阶段实现：
-  JSON Codec (§10.6) + Command/Response/Event/Error 结构 (§10.2-10.5)
-  统一错误码 (§10.5)
-```
+**日期：** 2026-09-08
+**硬件依赖：** 无（协议模型与编解码为纯 Dart）
 
-纯 Dart，无硬件阻塞，可立即开始。
+## 8.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/protocol/protocol_messages.dart | §10.2-10.5 | sealed ProtocolMessage：DeviceCommand / DeviceResponse / DeviceEvent / DeviceState / DevicePatch + DeviceError + ProtocolErrorCodes (3001 起步) |
+| lib/protocol/codec.dart | §10.6 | MessageCodec 抽象 (encode/decode(frameType, bytes)) |
+| lib/protocol/json_codec.dart | §10.6 | JsonCodec：字段名与 doc 示例逐字对齐 |
+| lib/protocol/ble_frame.dart | §10.1 | FrameType 注册表补全：0x20-0x23 (HELLO/PING 系列)、0x30/0x31 (RESOURCE 系列) |
+
+## 8.2 设计决策（固件侧需对齐）
+
+- 消息类型由 Frame TYPE 字节区分，JSON 体内不重复类型字段（PATCH 的 "type":"patch" 按 §16.3 示例保留）
+- decode 签名 `decode(int frameType, List<int> data)` —— 对 §10.6 草图的修正：类型在帧头
+- 错误响应：status='error' + error{code,message}；错误码 3001 无效参数 / 3002 未知命令 / 3003 忙 / 3004 不支持
+- STATE/PATCH 仅最小结构（version + state / version + ops），Gap 检测等语义 Phase 11 完善
+- 缺字段/类型不符 → ProtocolException（严格校验，尽早暴露固件问题）
+
+## 8.3 测试（§10.2-10.5 示例逐字对齐）
+
+| 用例 | 结果 |
+|---|---|
+| Command/Response/Event 与 doc 示例 JSON 逐字一致 | ✅ |
+| 各类型 round-trip + Unicode 参数 | ✅ |
+| 缺字段 / 类型错误 / 非法 JSON / 非业务帧类型 → ProtocolException | ✅ |
+| FrameType 新增 6 类通过 validate | ✅ |
+
+全套单测 88/88 通过，flutter analyze 无问题。
 
 ---
 
-# 9. 执行规则备忘（WORK_V2 §48/§49）
+# 9. 下一步：Phase 6 DeviceClient
+
+```text
+目标 (WORK_V2 §11)：
+  DeviceClient：connect/disconnect/command/events/patches/getState (§11.1)
+  只知道 Command/Response/Event/State/Patch，不知道 HTML/WebView (§11.2)
+  不直接依赖 BLE Plugin：DeviceClient → BleTransport → Plugin (§11.3)
+  可用 MockBleTransport 脱离真实 BLE 单测 (§11.4)
+```
+
+底层已就绪 (ReliableChannel + JsonCodec)，纯 Dart，无硬件阻塞。
+
+---
+
+# 10. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支
