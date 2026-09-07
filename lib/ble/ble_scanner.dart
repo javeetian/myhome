@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 /// BLE 扫描器：flutter_reactive_ble 的薄封装。
 ///
 /// FRB 的特性：停止扫描 = 取消流订阅。因此这里维护自己的订阅句柄与扫描状态流。
 ///
-/// 注意：FRB 仅支持 Android / iOS / macOS。其余平台 (含测试宿主环境)
+/// 注意：FRB 仅支持 Android / iOS。其余平台 (含 web 与测试宿主环境)
 /// 不构造 FRB 实例 —— 其构造函数内部会异步初始化并产生无法同步捕获的错误。
+/// 必须先用 kIsWeb 判断：web 上 dart:io 的 Platform 反映的是浏览器宿主
+/// 操作系统，直接判断会误入真实分支。
 class BleScanner {
   FlutterReactiveBle? _ble;
 
@@ -17,7 +20,7 @@ class BleScanner {
     if (_ble != null) {
       return true;
     }
-    if (!Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS) {
+    if (kIsWeb || (!Platform.isAndroid && !Platform.isIOS)) {
       return false;
     }
     _ble = FlutterReactiveBle();

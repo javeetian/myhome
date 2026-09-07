@@ -34,14 +34,17 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  flutter_riverpod: ^3.4.3
+  flutter_riverpod: ^3.3.2
   webview_flutter: ^4.14.1
   shelf: ^1.4.2
   shelf_web_socket: ^3.0.0
   web_socket_channel: ^3.0.3
   archive: ^4.2.0
   path_provider: ^2.1.6
-  permission_handler: ^13.0.2
+  # 12.x 配 permission_handler_android 13.0.1（旧式构建脚本），
+  # 与工程 AGP 8.11.1 / Gradle 8.14 工具链兼容；13.x 起 android 插件 14.x
+  # 的脚本面向 AGP 9，当前工具链下 Gradle 脚本编译失败。
+  permission_handler: ^12.0.3
   path: ^1.9.1
   flutter_reactive_ble: ^5.5.0
 
