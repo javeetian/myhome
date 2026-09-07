@@ -27,8 +27,8 @@ Phase 0  环境与工程初始化      ✅ 完成 (2026-09-08)
 Phase 1  BLE Transport         ✅ 代码完成，真机验收 ⏸ 待硬件
 Phase 2  Frame + CRC           ✅ 完成 (2026-09-08，纯 Dart 无硬件依赖)
 Phase 3  Fragment              ✅ 完成 (2026-09-08，纯 Dart)
-Phase 4  ACK / Retry / Queue   ⬜ 未开始 (下一目标，纯 Dart)
-Phase 5  Device Protocol       ⬜ 未开始
+Phase 4  ACK / Retry / Queue   ✅ 完成 (2026-09-08，纯 Dart)
+Phase 5  Device Protocol       ⬜ 未开始 (下一目标，纯 Dart)
 Phase 6  DeviceClient          ⬜ 未开始
 Phase 7  Riverpod              ⬜ 未开始
 Phase 8  UI Adapter            ⬜ 未开始
@@ -50,6 +50,8 @@ Phase 12 Security / Production ⬜ 未开始
 7. 实现 BLE Frame           ✅
 8. 实现 CRC                ✅
 9. 实现 Fragment           ✅
+10. 实现 ACK               ✅
+11. 实现 Retry             ✅
 ```
 
 ---
@@ -236,20 +238,55 @@ ESP32 开发板 ×1
 
 ---
 
-# 7. 下一步：Phase 4 ACK / Retry / Queue
+# 7. Phase 4 执行记录 ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（可靠通道为纯 Dart；测试用脚本化 FakeBleDevice 复用本项目的解码/组装逻辑 dogfooding）
+
+## 7.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/protocol/frame_stream_decoder.dart | §8.4 补全 | 字节流 → 帧：半包缓冲 / 粘包循环提取 / 坏帧按声明长度跳过继续扫描 |
+| lib/protocol/reliable_channel.dart | §9.1/9.2/9.3/9.5 | 发送：FIFO 队列 (Window=1) → 分片 → 逐帧写入 → 等 ACK；超时重发同字节 (同 SEQ 去重)；NACK 立即失败；接收：解码 → ACK/NACK 路由 + 数据帧组装 |
+
+## 7.2 设计决策（固件侧需对齐）
+
+- ACK/NACK 帧 Payload = MSG_ID (2B 大端)，MVP 无附加字段；NACK → 立即失败不重试
+- 重发复用完全相同的帧字节 (同 SEQ)，设备侧据此去重 (§7.4)
+- 总发送次数 = maxRetry + 1 (§9.2)；默认 maxRetry=3 / ackTimeout=2s / assembleTimeout=5s
+- Window=1 (§9.5)：前一消息未 ACK/未失败前，后续消息不写入 BLE
+- 迟到/未知 ACK 忽略；队列串行 (Replaceable/Cancelable 分类留待 §9.4 后续)
+- 入站数据帧按 TYPE 路由：0x10/0x11 → ACK 处理；0x01-0x05 → 组装
+
+## 7.3 测试
+
+| 用例 | 结果 |
+|---|---|
+| 正常 ACK / 分片写入 / Window=1 串行 / 重发字节一致 | ✅ |
+| ACK 丢失 → 超时重发成功 / 超 maxRetry 失败且队列继续 | ✅ |
+| NACK 立即失败 / 未知迟到 ACK 忽略 / 断开时 send 失败 | ✅ |
+| 设备→App 分片消息经字节流重组 (双向) | ✅ |
+| 解码器：半包全切分点 / 粘包 / 坏帧跳过续扫 / 超大 LENGTH 等待 | ✅ |
+
+全套单测 71/71 通过 (连续两轮)，flutter analyze 无问题。
+
+---
+
+# 8. 下一步：Phase 5 Device Protocol
 
 ```text
-目标 (WORK_V2 §9)：
-  0x10 ACK / 0x11 NACK；发送 → 等 ACK → 超时重试 (maxRetry/ackTimeout)
-  CommandQueue：Serial 优先，Window=1 起步
-  FragmentAssembler 超时 → NACK 请求重传
+目标 (WORK_V2 §10)：
+  业务 TYPE 已预注册 (0x01-0x05)，本阶段实现：
+  JSON Codec (§10.6) + Command/Response/Event/Error 结构 (§10.2-10.5)
+  统一错误码 (§10.5)
 ```
 
 纯 Dart，无硬件阻塞，可立即开始。
 
 ---
 
-# 8. 执行规则备忘（WORK_V2 §48/§49）
+# 9. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支
