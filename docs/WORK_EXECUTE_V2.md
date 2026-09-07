@@ -26,8 +26,8 @@ WORK_V2.md §50 的检查清单**不在原文档勾选**，状态统一维护在
 Phase 0  环境与工程初始化      ✅ 完成 (2026-09-08)
 Phase 1  BLE Transport         ✅ 代码完成，真机验收 ⏸ 待硬件
 Phase 2  Frame + CRC           ✅ 完成 (2026-09-08，纯 Dart 无硬件依赖)
-Phase 3  Fragment              ⬜ 未开始 (下一目标，纯 Dart)
-Phase 4  ACK / Retry / Queue   ⬜ 未开始
+Phase 3  Fragment              ✅ 完成 (2026-09-08，纯 Dart)
+Phase 4  ACK / Retry / Queue   ⬜ 未开始 (下一目标，纯 Dart)
 Phase 5  Device Protocol       ⬜ 未开始
 Phase 6  DeviceClient          ⬜ 未开始
 Phase 7  Riverpod              ⬜ 未开始
@@ -49,6 +49,7 @@ Phase 12 Security / Production ⬜ 未开始
 6. Flutter ↔ Device 双向通信 ⏸ 需要硬件；回环 echo 单测已就绪
 7. 实现 BLE Frame           ✅
 8. 实现 CRC                ✅
+9. 实现 Fragment           ✅
 ```
 
 ---
@@ -201,21 +202,54 @@ ESP32 开发板 ×1
 
 ---
 
-# 6. 下一步：Phase 3 Fragment
+# 6. Phase 3 执行记录 ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（Fragmenter / Assembler 为纯 Dart，单测覆盖 §8.5/§8.7）
+
+## 6.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/protocol/fragment.dart | §8.2/8.3/8.4 | FragmentHeader (MSG_ID/INDEX/TOTAL/LENGTH 各 2B 大端)；Fragmenter (Message → Frame[]，SEQ 连续分配)；FragmentAssembler (按 MSG_ID 分组、按 INDEX 存储、活动超时) |
+
+## 6.2 设计决策（固件侧需对齐）
+
+- Fragment 头编码在 Frame Payload 前 8 字节；INDEX 用 2 字节（MTU=23 时 50KB 消息需 1.6 万+ 分片，1 字节不够）
+- 单 Fragment DATA 上限：`mtu - 3(ATT头) - 7(Frame头) - 8(Fragment头) - 2(CRC)`；mtu=247 时 227 字节
+- 空消息产生 1 个 TOTAL=1/LENGTH=0 的 Fragment
+- 乱序免疫：按 INDEX 存储，收齐后按序拼接；多消息交错：按 MSG_ID 分组
+- 活动超时：每收一片重置计时，超时丢弃整个消息（§8.6）；NACK 重传 Phase 4 实现
+- 异常处理策略：重复 Fragment → 忽略；TOTAL 不一致 / INDEX 越界 / LENGTH 不符 / Payload 短于头 → 丢弃整个消息
+
+## 6.3 测试（§8.5/§8.7 全覆盖）
+
+| 用例 | 结果 |
+|---|---|
+| 大小矩阵 100/500/1K/5K/10K/50K 字节往返 | ✅ |
+| 随机乱序 / 随机重复 | ✅ |
+| 缺 Fragment 活动超时丢弃 + 同 MSG_ID 可重新组装 | ✅ |
+| 错误 TOTAL / 错误 LENGTH / INDEX 越界 / Payload 不足 | ✅ |
+| 多消息交错 / 单 Fragment / 空消息 / SEQ 连续 / MTU 过小 | ✅ |
+
+全套单测 54/54 通过，flutter analyze 无问题。
+
+---
+
+# 7. 下一步：Phase 4 ACK / Retry / Queue
 
 ```text
-目标 (WORK_V2 §8)：
-  应用消息 (可超 MTU) → Fragmenter → Fragment[] → Frame → BLE
-  BLE → Frame → Assembler → 完整消息
-  字段：MSG_ID / INDEX / TOTAL / LENGTH / DATA
-  异常：缺 Fragment / 重复 / 乱序 / 错误 TOTAL / 错误 LENGTH / 超时
+目标 (WORK_V2 §9)：
+  0x10 ACK / 0x11 NACK；发送 → 等 ACK → 超时重试 (maxRetry/ackTimeout)
+  CommandQueue：Serial 优先，Window=1 起步
+  FragmentAssembler 超时 → NACK 请求重传
 ```
 
 纯 Dart，无硬件阻塞，可立即开始。
 
 ---
 
-# 7. 执行规则备忘（WORK_V2 §48/§49）
+# 8. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支
