@@ -1,0 +1,176 @@
+# WORK_EXECUTE_V2.md
+
+# WORK_V2 执行情况记录
+
+**版本：** V2.0
+**文档类型：** EXECUTE / 执行记录
+**最后更新：** 2026-09-08
+**对应计划：** [WORK_V2.md](WORK_V2.md)（计划文档保持不变，执行状态只记录在本文件）
+
+---
+
+# 0. 文档定位
+
+```text
+WORK_V2.md      → 计划 ("每个阶段做什么、如何验证")
+WORK_EXECUTE_V2.md → 执行 ("每个阶段实际做了什么、验证结果、遗留问题")
+```
+
+WORK_V2.md §50 的检查清单**不在原文档勾选**，状态统一维护在本文件。
+
+---
+
+# 1. 执行状态总览
+
+```text
+Phase 0  环境与工程初始化      ✅ 完成 (2026-09-08)
+Phase 1  BLE Transport         ✅ 代码完成，真机验收 ⏸ 待硬件
+Phase 2  Frame                 ⬜ 未开始 (下一目标)
+Phase 3  Fragment              ⬜ 未开始
+Phase 4  ACK / Retry / Queue   ⬜ 未开始
+Phase 5  Device Protocol       ⬜ 未开始
+Phase 6  DeviceClient          ⬜ 未开始
+Phase 7  Riverpod              ⬜ 未开始
+Phase 8  UI Adapter            ⬜ 未开始
+Phase 9  WebView Runtime       ⬜ 未开始
+Phase 10 Manifest / UI Package ⬜ 未开始
+Phase 11 State / Patch / Event ⬜ 未开始
+Phase 12 Security / Production ⬜ 未开始
+```
+
+对应 WORK_V2 §50 清单：
+
+```text
+1. 创建 Flutter 工程        ✅
+2. 加入 Riverpod            ✅
+3. 加入 BLE Plugin          ✅
+4. 实现 BleTransport        ✅ (代码 + 单测)
+5. 建立 ESP32/AC7014 GATT   ⏸ 需要硬件 (见 §3)
+6. Flutter ↔ Device 双向通信 ⏸ 需要硬件；回环 echo 单测已就绪
+```
+
+---
+
+# 2. ⚠️ 硬件依赖（阻塞项）
+
+> **当前所有未完成项的根因都是缺少真实 BLE 硬件。**
+
+按 WORK_V2 §30，MVP 至少需要：
+
+```text
+ESP32 开发板 ×1
+(或 AC7014 模块 ×1)
+```
+
+缺少硬件的直接后果：
+
+| 阻塞项 | 对应 WORK_V2 | 说明 |
+|---|---|---|
+| Flutter ↔ Device 真机双向通信验收 | §6.5 / §6.6 / §50-6 | 回环 echo 单测 (test/ble/echo_test.dart) 已覆盖 1/10/100/200/500/1000 字节，真机未验 |
+| MTU 实际协商验证 | §6.4 | 代码按协商结果保存 MTU，真机行为未验 |
+| 固件 GATT 服务建立 | §40 / §50-5 | 设备端 TX/RX 特征与 BleConstants UUID 对齐待做 |
+| Phase 1 完成条件 | §6.6 | "Flutter ↔ Device 稳定双向通信" 未真机证明 |
+
+**硬件到位后待执行的验收动作：**
+
+```text
+1. 设备端建立 GATT：service/tx/rx = lib/ble/ble_constants.dart 中的 UUID
+2. 设备端 echo 固件：Notify 原样返回 Write 字节
+3. 真机跑通 echo 大小矩阵 (1/10/100/200/500/1000 字节)
+4. 记录实际协商 MTU 与吞吐量基线 (供 Phase 2 分片设计参考)
+```
+
+---
+
+# 3. Phase 0 执行记录 ✅
+
+**日期：** 2026-09-08
+
+## 3.1 完成内容
+
+- 目录结构补齐：`lib/protocol/`、`lib/storage/`（§5.2 要求的 7 个目录齐备）
+- 依赖齐备：flutter_riverpod / webview_flutter / flutter_reactive_ble / shelf / web_socket_channel
+
+## 3.2 验证结果（§5.4 完成条件）
+
+| 条件 | 结果 |
+|---|---|
+| flutter analyze | ✅ 无问题 |
+| flutter test | ✅ 通过 |
+| flutter run (Chrome) | ✅ 扫描页 6/6 UI 元素渲染 + 零控制台错误（headless Chrome 驱动验证） |
+| iOS Build | ✅ Runner.app 30.5MB（--no-codesign） |
+| Android Build | ✅ app-debug.apk |
+
+## 3.3 过程中修复的问题
+
+1. **flutter_riverpod 版本冲突**：SDK 3.11.5 无法用 riverpod 3.4.x（需 Dart ≥3.12），
+   约束改为 `^3.3.2`。升级 Flutter 到 3.47.2 后可恢复 3.4.x。
+2. **permission_handler 14.x 构建失败**：其 android 插件构建脚本面向 AGP 9 / Gradle 9，
+   与工程 (AGP 8.11.1 / Gradle 8.14 / Kotlin 2.2.20) 不兼容。
+   解决：permission_handler `^13.0.2` → `^12.0.3`（配 android 13.0.1 旧式脚本）。
+   工具链升级 AGP 9 后可恢复。
+3. **BleScanner 平台判断 bug**：`Platform.isMacOS` 在 web 上反映浏览器宿主 OS，
+   导致 web 误构造 FlutterReactiveBle（FRB 仅支持 Android/iOS）。
+   修复：先判 `kIsWeb`，支持白名单只留 Android/iOS。
+4. **widget 测试挂起**：真实 FRB 内部定时器导致测试失败。
+   解决：测试注入 FakeBleScanner（Riverpod override），生产代码零改动。
+
+## 3.4 遗留
+
+- `flutter doctor`：Android SDK 缺 cmdline-tools、license 未接受（不影响构建，影响工具链维护）。
+
+---
+
+# 4. Phase 1 执行记录 ✅（代码）/ ⏸（真机）
+
+**日期：** 2026-09-08
+
+## 4.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/ble/ble_constants.dart | §6.3 | UUID 统一管理（service/tx/rx/uiBundle） |
+| lib/ble/ble_transport.dart | §6.1 | 字节级抽象：connect/disconnect/write/notifications/requestMtu |
+| lib/ble/ble_peripheral.dart | §5.2 | 插件窄接口接缝（可注入 Fake） |
+| lib/ble/reactive_ble_peripheral.dart | §5.2 | flutter_reactive_ble 适配器 |
+| lib/ble/reactive_ble_transport.dart | §6.2/6.4 | 连接流程：Connect → MTU 协商 → GATT 校验 → 订阅 RX；MTU 拒绝回退 23；失败路径清理；连接状态流 |
+
+## 4.2 重构
+
+- 原 lib/ble/ble_transport.dart（混入 JSON 协议，违反 §2.1 分层纪律）
+  → 改名 `BleDeviceSession` 迁至 lib/device/ble_device_session.dart，
+  标注 TODO：Phase 5+ 重建于新 Transport 之上。
+
+## 4.3 测试（15/15 通过）
+
+| 文件 | 覆盖 |
+|---|---|
+| test/ble/reactive_ble_transport_test.dart | 11 例：MTU 协商值生效 / MTU 拒绝回退 / 缺服务失败清理 / 缺特征失败 / 连接超时 / write 路由 TX / Notify 转发 / 未连接守卫 / 重复连接 / 断开语义 / 自发断开 / echo 回环 |
+| test/ble/echo_test.dart | §6.5 大小矩阵 1/10/100/200/500/1000 字节 + 5KB 往返 |
+| test/ble/fake_ble_peripheral.dart | 可脚本化假外设 |
+| test/ble/fake_ble_transport.dart | 回环假传输（§11.4 MockBleTransport 雏形） |
+
+## 4.4 未完成（均待硬件，见 §2）
+
+- §6.5 真机验证
+- §6.6 完成条件（真机稳定双向通信）
+
+---
+
+# 5. 下一步：Phase 2 Transport Frame
+
+```text
+目标 (WORK_V2 §7)：
+  VER/TYPE/FLAGS/SEQ/LENGTH/PAYLOAD + CRC16 的 Frame 编解码
+  测试：正常/空 Payload/最大 Payload/CRC 错误/Length 错误/Version 错误/非法 Type/SEQ 溢出
+```
+
+无硬件阻塞，可立即开始。
+
+---
+
+# 6. 执行规则备忘（WORK_V2 §48/§49）
+
+- 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
+- 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支
+- 本文件更新与 git 操作需用户确认

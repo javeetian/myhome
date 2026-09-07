@@ -3,7 +3,7 @@ import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../ble/ble_transport.dart';
+import '../../device/ble_device_session.dart';
 import '../../device/device_session.dart';
 import '../../device/mock_device_session.dart';
 import '../../providers/ble_provider.dart';
@@ -127,7 +127,7 @@ class _ScanPageState extends ConsumerState<ScanPage> {
                 title: Text(_displayName(d)),
                 subtitle: Text('${d.id}  RSSI: ${d.rssi}'),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: _busy ? null : () => _openDevice(BleTransport(d)),
+                onTap: _busy ? null : () => _openDevice(BleDeviceSession(d)),
               ),
             ),
           ),
