@@ -30,8 +30,8 @@ Phase 3  Fragment              ✅ 完成 (2026-09-08，纯 Dart)
 Phase 4  ACK / Retry / Queue   ✅ 完成 (2026-09-08，纯 Dart)
 Phase 5  Device Protocol       ✅ 完成 (2026-09-08，纯 Dart)
 Phase 6  DeviceClient          ✅ 完成 (2026-09-08，纯 Dart)
-Phase 7  Riverpod              ⬜ 未开始 (下一目标)
-Phase 8  UI Adapter            ⬜ 未开始
+Phase 7  Riverpod              ✅ 完成 (2026-09-08)
+Phase 8  UI Adapter            ⬜ 未开始 (下一目标)
 Phase 9  WebView Runtime       ⬜ 未开始
 Phase 10 Manifest / UI Package ⬜ 未开始
 Phase 11 State / Patch / Event ⬜ 未开始
@@ -54,6 +54,7 @@ Phase 12 Security / Production ⬜ 未开始
 11. 实现 Retry             ✅
 12. 实现 Device Protocol   ✅ (消息模型 + JSON Codec；DeviceClient 下一阶段)
 13. 实现 DeviceClient      ✅
+14. 接入 Riverpod          ✅ (会话控制器 + provider 族)
 ```
 
 ---
@@ -348,22 +349,62 @@ ESP32 开发板 ×1
 
 ---
 
-# 10. 下一步：Phase 7 Riverpod
+# 10. Phase 7 执行记录 ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（ProviderContainer + Fake 传输测试）
+
+## 10.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/device/connection_phase.dart | §12.6 | ConnectionPhase 枚举 (disconnected → ... → connected / error) |
+| lib/device/device_session.dart | §12.5 | 不可变会话快照：phase/deviceId/client/deviceState/error |
+| lib/providers/device_session_provider.dart | §12.3/12.4 | DeviceSessionController (单会话形态) + deviceClientProvider/connectionPhaseProvider/deviceStateProvider |
+| lib/providers/ble_provider.dart | §12.3 | bleTransportProvider：懒构造 + 平台守卫 + 抽象类型 (测试可 override) |
+| lib/ble/ble_transport.dart | §6.1 扩展 | 抽象接口新增 connectionStates (断线感知是 Transport 职责, §20) |
+
+## 10.2 重构
+
+- 旧演示栈改名让位：DemoDeviceChannel / MockDemoDeviceChannel / BleDemoDeviceChannel
+  + demoDeviceSessionControllerProvider → lib/providers/demo_device_session_provider.dart
+  (Phase 8 由新栈替代后整体移除)
+
+## 10.3 状态生命周期 (§12.6)
+
+当前可观测转移：disconnected → connecting → connected；connected → disconnecting → disconnected；
+设备侧主动断线 → disconnected；任何异常 → error。
+discovering/negotiating 在 transport 内部尚不可观测；handshaking/loadingUi/syncingState
+分别待 Phase 10/9/11 接入。多设备 DeviceManager 待多设备需求实现。
+
+## 10.4 测试
+
+| 用例 | 结果 |
+|---|---|
+| 初始态 / connect 成功中间态 (门控观察) / connect 失败 → error | ✅ |
+| 设备状态推送 / disconnect 转移 / 设备主动断线 / 重复 connect 释放旧会话 | ✅ |
+| 命令经会话 client 全链路收发 | ✅ |
+| 全套 109/109 通过；Chrome 回归 6/6 UI + 零错误 | ✅ |
+
+**注：** Riverpod 3 微任务批处理会合并瞬间状态变化，测试中间态需用门控 (connectGate)。
+
+---
+
+# 11. 下一步：Phase 8 UI Adapter
 
 ```text
-目标 (WORK_V2 §12)：
-  bleTransportProvider / deviceClientProvider / deviceSessionProvider
-  deviceManagerProvider / deviceStateProvider / deviceManifestProvider
-  uiRuntimeProvider / uiCacheProvider
-  连接状态生命周期：disconnected → scanning → connecting → ... → connected (§12.6)
-  Riverpod 不管 Frame/CRC/Fragment/Codec/Transport (§12.2)
+目标 (WORK_V2 §13)：
+  Shelf 本地 HTTP 服务器 (127.0.0.1 + 随机端口 + session token §13.5)
+  GET /api/device、GET /api/state、POST /api/command、GET /api/resource/<path>、WS /ws (§13.2)
+  HTTP → UI Adapter → DeviceClient (§13.3)
+  旧 UiServer (DemoDeviceChannel) 由新 DeviceClient 版本替代
 ```
 
 可立即开始。
 
 ---
 
-# 11. 执行规则备忘（WORK_V2 §48/§49）
+# 12. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支

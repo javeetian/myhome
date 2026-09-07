@@ -3,11 +3,11 @@ import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../device/ble_device_session.dart';
-import '../../device/device_session.dart';
-import '../../device/mock_device_session.dart';
+import '../../device/ble_demo_device_channel.dart';
+import '../../device/demo_device_channel.dart';
+import '../../device/mock_demo_device_channel.dart';
 import '../../providers/ble_provider.dart';
-import '../../providers/device_session_provider.dart';
+import '../../providers/demo_device_session_provider.dart';
 import '../../providers/ui_runtime_provider.dart';
 import 'device_page.dart';
 
@@ -40,9 +40,9 @@ class _ScanPageState extends ConsumerState<ScanPage> {
   }
 
   /// 打开设备控制页：切换会话 → 启动 UI Server → 跳转 WebView。
-  Future<void> _openDevice(DeviceSession session) async {
+  Future<void> _openDevice(DemoDeviceChannel session) async {
     setState(() => _busy = true);
-    ref.read(deviceSessionControllerProvider.notifier).select(session);
+    ref.read(demoDeviceSessionControllerProvider.notifier).select(session);
     final ok =
         await ref.read(uiServerControllerProvider.notifier).start(session);
     if (!mounted) {
@@ -52,7 +52,7 @@ class _ScanPageState extends ConsumerState<ScanPage> {
     if (!ok) {
       final error = ref.read(uiServerControllerProvider).error;
       _showSnack('连接失败: $error');
-      ref.read(deviceSessionControllerProvider.notifier).select(null);
+      ref.read(demoDeviceSessionControllerProvider.notifier).select(null);
       return;
     }
     await Navigator.of(context).push(
@@ -105,7 +105,7 @@ class _ScanPageState extends ConsumerState<ScanPage> {
               leading: const Icon(Icons.science),
               title: const Text('Mock 设备演示'),
               subtitle: const Text('无需真实硬件，模拟完整交互链路'),
-              onTap: _busy ? null : () => _openDevice(MockDeviceSession()),
+              onTap: _busy ? null : () => _openDevice(MockDemoDeviceChannel()),
             ),
           ),
           Padding(
@@ -127,7 +127,7 @@ class _ScanPageState extends ConsumerState<ScanPage> {
                 title: Text(_displayName(d)),
                 subtitle: Text('${d.id}  RSSI: ${d.rssi}'),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: _busy ? null : () => _openDevice(BleDeviceSession(d)),
+                onTap: _busy ? null : () => _openDevice(BleDemoDeviceChannel(d)),
               ),
             ),
           ),

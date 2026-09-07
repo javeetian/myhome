@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/constants.dart';
-import '../device/device_session.dart';
+import '../device/demo_device_channel.dart';
 import '../ui_runtime/ui_server.dart';
 
 /// UI Server 运行状态。
@@ -20,7 +20,7 @@ class UiServerController extends Notifier<UiServerState> {
   UiServerState build() => const UiServerState();
 
   /// 以 [session] 为设备通道启动 UI Server，返回是否成功。
-  Future<bool> start(DeviceSession session) async {
+  Future<bool> start(DemoDeviceChannel session) async {
     await stop(); // 先停掉旧服务
     try {
       final server = UiServer(session);

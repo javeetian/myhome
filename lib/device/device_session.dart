@@ -1,33 +1,52 @@
-import 'dart:typed_data';
+import 'connection_phase.dart';
+import 'device_client.dart';
+import '../protocol/protocol_messages.dart';
 
-/// 与设备交互的抽象通道：上层 (UI Runtime) 只依赖此接口，
-/// 不关心底层是 BLE 实现还是 Mock 实现。
+/// 设备会话快照 (WORK_V2 §12.5)：Riverpod 不可变状态。
 ///
-/// 对应 FRAMEWORK_V2 §9 DeviceClient 的职责。Phase 1 暂由
-/// [BleTransport] 直接实现；后续引入 DeviceClient / Protocol 分层。
-abstract class DeviceSession {
-  /// 建立通道 (BLE: 连接 + 发现服务 + 订阅 Notify)。
-  Future<void> init();
-
-  /// 发送一条 JSON 指令。
-  /// [sync] 为 true 时等待设备响应 (带超时)；false 时发送后立即返回。
-  Future<Map<String, dynamic>> sendCommand(
-    Map<String, dynamic> command, {
-    bool sync = true,
+/// ```text
+/// DeviceSession (§12.5)
+/// ├── Connection State  → phase
+/// ├── Device State      → deviceState (Phase 11 完整语义)
+/// ├── DeviceClient      → client (UI Runtime 经此访问设备)
+/// └── UI Runtime        → Phase 9 接入
+/// ```
+class DeviceSession {
+  const DeviceSession({
+    required this.phase,
+    this.deviceId,
+    this.client,
+    this.deviceState,
+    this.error,
   });
 
-  /// 设备主动推送 (type: push / event / patch)。
-  Stream<Map<String, dynamic>> get pushes;
+  /// 初始 (未连接) 快照。
+  const DeviceSession.none() : this(phase: ConnectionPhase.disconnected);
 
-  /// 读取设备端 UI 压缩包 (ui.html.gz) 的原始字节。
-  Future<Uint8List> readUiBundle();
+  final ConnectionPhase phase;
+  final String? deviceId;
+  final DeviceClient? client;
 
-  /// 是否已连接。
-  bool get isConnected;
+  /// 最近一次设备状态 (Phase 11 引入 Patch 应用与版本 Gap 检测)。
+  final DeviceState? deviceState;
 
-  /// 会话展示名称 (设备名)。
-  String get name;
+  /// 最近一次错误信息 (phase == error 时有效)。
+  final String? error;
 
-  /// 释放底层资源。
-  Future<void> dispose();
+  DeviceSession copyWith({
+    ConnectionPhase? phase,
+    String? deviceId,
+    DeviceClient? client,
+    DeviceState? deviceState,
+    String? error,
+    bool clearError = false,
+  }) {
+    return DeviceSession(
+      phase: phase ?? this.phase,
+      deviceId: deviceId ?? this.deviceId,
+      client: client ?? this.client,
+      deviceState: deviceState ?? this.deviceState,
+      error: clearError ? null : (error ?? this.error),
+    );
+  }
 }

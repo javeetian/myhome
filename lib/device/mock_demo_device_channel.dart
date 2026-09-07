@@ -5,12 +5,12 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 
-import 'device_session.dart';
+import 'demo_device_channel.dart';
 
 /// Mock 设备会话：无需真实硬件即可演示完整链路
 /// (WebView → UI Server → 会话 → 响应/推送)。
-class MockDeviceSession implements DeviceSession {
-  MockDeviceSession({this.name = 'Mock 设备'});
+class MockDemoDeviceChannel implements DemoDeviceChannel {
+  MockDemoDeviceChannel({this.name = 'Mock 设备'});
 
   @override
   final String name;

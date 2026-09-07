@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'ble_peripheral.dart';
+
 /// 字节级 BLE 传输抽象 (WORK_V2 §6.1)。
 ///
 /// 上层 (Protocol / DeviceClient) 只依赖此接口，不关心底层是
@@ -18,6 +20,10 @@ abstract class BleTransport {
 
   /// 设备发来的原始字节流 (来自 RX Characteristic 的 Notify)。
   Stream<List<int>> get notifications;
+
+  /// 连接状态流 (Phase 7 会话层追踪断线/重连，WORK_V2 §12.6/§20)。
+  /// 对 §6.1 接口的扩展：断开感知是 Transport 层职责，所有实现必须提供。
+  Stream<BleConnectionState> get connectionStates;
 
   /// 请求协商 MTU，返回实际协商结果。
   ///

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
-import '../../providers/device_session_provider.dart';
+import '../../providers/demo_device_session_provider.dart';
 import '../../providers/ui_runtime_provider.dart';
 import '../../ui_runtime/webview_host.dart';
 
@@ -20,7 +20,7 @@ class DevicePage extends ConsumerStatefulWidget {
 class _DevicePageState extends ConsumerState<DevicePage> {
   Future<void> _disconnect() async {
     await ref.read(uiServerControllerProvider.notifier).stop();
-    ref.read(deviceSessionControllerProvider.notifier).select(null);
+    ref.read(demoDeviceSessionControllerProvider.notifier).select(null);
     if (mounted) {
       Navigator.of(context).pop();
     }

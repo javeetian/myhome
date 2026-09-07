@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:myhome/ble/ble_peripheral.dart';
 import 'package:myhome/ble/ble_transport.dart';
 import 'package:myhome/protocol/ble_frame.dart';
 import 'package:myhome/protocol/fragment.dart';
@@ -13,6 +14,12 @@ import 'package:myhome/protocol/protocol_messages.dart';
 class FakeBleDevice implements BleTransport {
   /// 是否连接 (false 时 write 抛错，模拟断开)。
   bool connected = true;
+
+  /// 设置后 connect 阻塞直到手动放行 (测试中间态)。
+  Completer<void>? connectGate;
+
+  /// connect 直接失败 (模拟连接异常)。
+  bool rejectConnect = false;
 
   /// 组装完成但丢弃不 ACK 的消息数 (模拟 ACK 丢失)。
   int dropMessages = 0;
@@ -38,6 +45,15 @@ class FakeBleDevice implements BleTransport {
 
   final StreamController<List<int>> _notifications =
       StreamController<List<int>>.broadcast();
+
+  final StreamController<BleConnectionState> _connectionStates =
+      StreamController<BleConnectionState>.broadcast();
+
+  /// 模拟设备侧断开 (广播 disconnected)。
+  void emitDisconnected() => _connectionStates.add(BleConnectionState.disconnected);
+
+  @override
+  Stream<BleConnectionState> get connectionStates => _connectionStates.stream;
 
   final FrameStreamDecoder _decoder = FrameStreamDecoder();
   final FragmentAssembler _assembler = FragmentAssembler();
@@ -131,6 +147,13 @@ class FakeBleDevice implements BleTransport {
 
   @override
   Future<void> connect(String deviceId) async {
+    final gate = connectGate;
+    if (gate != null) {
+      await gate.future;
+    }
+    if (rejectConnect) {
+      throw StateError('连接被拒绝');
+    }
     connected = true;
   }
 

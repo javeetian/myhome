@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:myhome/ble/ble_peripheral.dart';
 import 'package:myhome/ble/ble_transport.dart';
 
 /// 回环假传输：写入的字节原样从 notifications 返回 (模拟设备 echo)。
@@ -8,9 +9,14 @@ import 'package:myhome/ble/ble_transport.dart';
 class FakeBleTransport implements BleTransport {
   final StreamController<List<int>> _notifications =
       StreamController<List<int>>.broadcast();
+  final StreamController<BleConnectionState> _connectionStates =
+      StreamController<BleConnectionState>.broadcast();
 
   bool _connected = false;
   int _mtu = 23;
+
+  /// 模拟设备侧断开 (广播 disconnected)。
+  void emitDisconnected() => _connectionStates.add(BleConnectionState.disconnected);
 
   /// 当前协商 MTU。
   int get mtu => _mtu;
@@ -42,6 +48,9 @@ class FakeBleTransport implements BleTransport {
 
   @override
   Stream<List<int>> get notifications => _notifications.stream;
+
+  @override
+  Stream<BleConnectionState> get connectionStates => _connectionStates.stream;
 
   @override
   Future<int> requestMtu(int mtu) async {

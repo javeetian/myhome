@@ -6,17 +6,17 @@ import 'dart:typed_data';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
 import '../ble/ble_constants.dart';
-import 'device_session.dart';
+import 'demo_device_channel.dart';
 
-/// 基于 BLE GATT 的 [DeviceSession] 实现 (flutter_reactive_ble)：
+/// 基于 BLE GATT 的 [DemoDeviceChannel] 实现 (flutter_reactive_ble)：
 /// 指令 → 写入特征值；响应/推送 ← Notify 特征值。
 ///
 /// TODO(Phase 5+): 本类混入了 JSON 协议 / 请求响应配对等 Protocol 层职责，
 /// 违反分层纪律 (WORK_V2 §2.1 先 Transport 后 Protocol)。待 Phase 2 Frame、
 /// Phase 5 Protocol、Phase 6 DeviceClient 就绪后，改为构建在
 /// [BleTransport] 之上，本类届时删除。
-class BleDeviceSession implements DeviceSession {
-  BleDeviceSession(this._device);
+class BleDemoDeviceChannel implements DemoDeviceChannel {
+  BleDemoDeviceChannel(this._device);
 
   final DiscoveredDevice _device;
 

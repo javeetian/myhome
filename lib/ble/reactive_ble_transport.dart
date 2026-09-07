@@ -50,6 +50,7 @@ class ReactiveBleTransport implements BleTransport {
   bool get isConnected => _connectionState == BleConnectionState.connected;
 
   /// 连接状态流 (Phase 7 会话层消费)。
+  @override
   Stream<BleConnectionState> get connectionStates => _state.stream;
 
   @override

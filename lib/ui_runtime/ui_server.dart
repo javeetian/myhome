@@ -8,10 +8,10 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../device/device_session.dart';
+import '../device/demo_device_channel.dart';
 import 'ui_cache.dart';
 
-/// 本地 UI Server：HTTP/WebSocket → [DeviceSession] (BLE/Mock)。
+/// 本地 UI Server：HTTP/WebSocket → [DemoDeviceChannel] (BLE/Mock)。
 /// 即 FRAMEWORK_V2 中的 UI Adapter + Local HTTP Server (§17/§29)。
 ///
 /// 路由：
@@ -22,7 +22,7 @@ import 'ui_cache.dart';
 class UiServer {
   UiServer(this._session);
 
-  final DeviceSession _session;
+  final DemoDeviceChannel _session;
   final Set<WebSocketChannel> _wsClients = <WebSocketChannel>{};
 
   HttpServer? _httpServer;
