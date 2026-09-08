@@ -35,7 +35,7 @@ Phase 8  UI Adapter            ✅ 完成 (2026-09-08)
 Phase 9  WebView Runtime       ✅ 完成 (2026-09-08)
 Phase 10 Manifest / UI Package ✅ 完成 (2026-09-08)
 Phase 11 State / Patch / Event ✅ 完成 (2026-09-08)
-Phase 12 Security / Production ⬜ 未开始 (下一目标)
+Phase 12 Security / Production  ✅ 完成 (2026-09-08) [代码侧；真机验收仍待硬件]
 Phase 10 Manifest / UI Package ⬜ 未开始
 Phase 11 State / Patch / Event ⬜ 未开始
 Phase 12 Security / Production ⬜ 未开始
@@ -602,24 +602,82 @@ discovering/negotiating 在 transport 内部尚不可观测；handshaking/loadin
 
 ---
 
-# 16. 下一步：Phase 12 Security / Performance / Production
+# 16. Phase 12 执行记录 ✅
 
-```text
-目标 (WORK_V2 §28-§35)：
-  PING/PONG 心跳 (FrameType 已注册，实现即可)
-  统一日志系统 (§31/§32 格式与等级)
-  Developer Mode 调试面板 (§33)
-  性能指标基线：吞吐量 / UI 加载时间 / 操作延迟 (§28)
-  异常矩阵回归 (§29) + 多设备 (DeviceManager, §22)
-  安全：认证/加密 (正式版, §34/§35)
-  MVP 验证标准核对 (§42 十六项清单)
-```
+**日期：** 2026-09-08
+**硬件依赖：** 无（心跳 / 日志 / 统计为纯 Dart + FakeBleDevice；面板为 widget 测试）
 
-可立即开始。
+## 16.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/protocol/protocol_messages.dart + json_codec.dart | §22 扩展 | DevicePing / DevicePong (request_id 关联日志) |
+| lib/device/device_client.dart | §22 扩展 | startHeartbeat / stopHeartbeat + 连续失联检测 + onConnectionLost；dispose 释放定时器 |
+| lib/core/app_log.dart | §31/§32 | 统一日志：TIME/LEVEL/MODULE/DEVICE/SEQ/REQUEST_ID 格式 + 等级过滤 |
+| lib/core/device_stats.dart | §28/§33 | TX/RX 字节、重试次数、命令延迟 P50/P95/P99 |
+| lib/protocol/reliable_channel.dart | §31/§28 | 埋点：收发字节、重发计数、帧日志、NACK 警告 |
+| lib/providers/device_manager_provider.dart | §22 | 多设备会话记录 (数据层；完整多设备 UI 待云阶段) |
+| lib/providers/device_session_provider.dart | §20/§12.6 | 心跳接入 (连接后启动)；失联 → 断线流程；会话快照 upsert manager |
+| lib/ui/pages/developer_panel.dart + device_page.dart | §33 | Developer Mode 面板：设备信息 / 连接状态 / 版本 / 能力 / 通信统计 / 最近错误 |
+
+## 16.2 设计决策
+
+- PING/PONG 带 request_id (与日志系统关联 §31)；失联判定 = 连续 3 次无 PONG
+- 心跳间隔 10s (静态可调，测试可缩短)；失联 → 断线流程 (§20)，快照保留旧 client 供调试面板读统计
+- 日志等级：开发 debug / 正式建议 info (§32)；输出通道可注入 (测试收集)
+- 统计埋点在 ReliableChannel (帧级 TX/RX/重发) 与 DeviceClient (命令往返延迟)
+- DeviceManager 为数据层记录 (§22)；每设备独立 Transport/State 的完整多设备 UI 待云阶段 (§45 不过早优化)
+- 安全认证 / 加密 (§34/§35) 明确留待正式版：MVP 第一目标是验证架构闭环
+
+## 16.3 测试（新增 19 例，全套 193/193）
+
+| 用例 | 结果 |
+|---|---|
+| AppLog 格式 / 等级过滤 / 运行时调整 | ✅ 5 |
+| DeviceStats 字节 / 重试 / 分位数 / 连接时间 | ✅ 4 |
+| 心跳往返 / 失联回调 / 停止 / dispose 释放 | ✅ 4 |
+| DeviceManager 多设备记录 / 覆盖 / 移除 | ✅ 2 |
+| Developer 面板渲染 | ✅ 1 |
+| PING/PONG codec | ✅ 2 |
+| 会话心跳失联 → disconnected (§20) | ✅ 1 |
+
+## 16.4 MVP 验证标准核对 (§42 十六项)
+
+| # | 项 | 状态 |
+|---|---|---|
+| 1-2 | 扫描 / 连接 | ✅ 代码 + 测试 (真机待硬件) |
+| 3-4 | MTU 协商 / HELLO | ✅ (真机 MTU 实测待硬件) |
+| 5-8 | Manifest / UI Package / Cache / WebView | ✅ |
+| 9-12 | Command / Binary Frame / Fragment / Response | ✅ |
+| 13-14 | State / Patch | ✅ |
+| 15 | WebSocket | ✅ |
+| 16 | 断线重连 | ✅ (心跳失联 + 重连重新同步) |
+
+**代码侧 16/16 齐备；真机验证仍受硬件阻塞 (见 §2)。**
+
+## 16.5 遗留 (正式版, §54)
+
+- 真机验收：echo 大小矩阵、吞吐基线、UI 加载时间 (Cold/Warm/Cached Start)
+- 安全：Device Identity / Challenge / Session Key / 加密 (§34/§35)
+- 多设备并发 UI、云端扩展 (§36-§39)、OTA (§38)
+- 日志正式版默认等级切换 (INFO)、Developer Mode 生产开关
 
 ---
 
-# 17. 执行规则备忘（WORK_V2 §48/§49）
+# 17. 下一步：真机验收 (硬件到位后)
+
+```text
+按 §2 硬件依赖清单执行：
+  1. 设备端固件：GATT (BleConstants UUID) + echo + HELLO/RESOURCE/STATE/PING 协议实现 (§40)
+  2. 真机 echo 大小矩阵 (1/10/100/200/500/1000 字节 + 5KB/10KB)
+  3. 吞吐基线 + UI 加载时间 (Cold/Warm/Cached)
+  4. §42 十六项验收清单逐项真机确认
+  5. 异常矩阵 (§29)：设备重启 / 断连 / 丢包现场验证
+```
+
+---
+
+# 18. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支

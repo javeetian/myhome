@@ -126,4 +126,27 @@ void main() {
       );
     });
   });
+
+  group('PING / PONG (Phase 12 心跳)', () {
+    test('round-trip', () {
+      final ping = codec.decode(
+        FrameType.ping,
+        codec.encode(const DevicePing(requestId: 7)),
+      ) as DevicePing;
+      expect(ping.requestId, 7);
+
+      final pong = codec.decode(
+        FrameType.pong,
+        codec.encode(const DevicePong(requestId: 7)),
+      ) as DevicePong;
+      expect(pong.requestId, 7);
+    });
+
+    test('缺 request_id → ProtocolException', () {
+      expect(
+        () => codec.decode(FrameType.ping, utf8.encode('{}')),
+        throwsA(isA<ProtocolException>()),
+      );
+    });
+  });
 }

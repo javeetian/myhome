@@ -110,6 +110,16 @@ class DemoDevice implements BleTransport {
         } on ProtocolException {
           // 坏状态请求：忽略
         }
+      case FrameType.ping:
+        try {
+          final ping = _codec.decode(frameType, message) as DevicePing;
+          _sendMessage(
+            FrameType.pong,
+            _codec.encode(DevicePong(requestId: ping.requestId)),
+          );
+        } on ProtocolException {
+          // 坏 PING：忽略
+        }
       default:
         break;
     }

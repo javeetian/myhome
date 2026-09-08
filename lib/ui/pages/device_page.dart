@@ -5,6 +5,7 @@ import '../../device/connection_phase.dart';
 import '../../providers/device_session_provider.dart';
 import '../../providers/ui_runtime_provider.dart';
 import '../../ui_runtime/webview_host.dart';
+import 'developer_panel.dart';
 
 /// 设备控制页：WebView 加载设备端 UI (由本地 UI Server 服务)。
 ///
@@ -67,6 +68,14 @@ class _DevicePageState extends ConsumerState<DevicePage> {
       appBar: AppBar(
         title: Text(widget.name),
         actions: <Widget>[
+          IconButton(
+            icon: const Icon(Icons.bug_report),
+            tooltip: '开发者模式',
+            onPressed: () => showModalBottomSheet<void>(
+              context: context,
+              builder: (_) => const DeveloperPanel(),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.close),
             tooltip: '断开并返回',

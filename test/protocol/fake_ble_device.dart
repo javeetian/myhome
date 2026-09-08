@@ -44,6 +44,15 @@ class FakeBleDevice implements BleTransport {
   /// 推送过的状态 (无则 v1 空状态)。
   DeviceState? Function(DeviceStateRequest request)? onStateRequest;
 
+  /// PING 处理器 (Phase 12)。null = 不回 PONG (模拟失联)。
+  DevicePong? Function(DevicePing ping)? onPing;
+
+  /// PING 响应延迟。
+  Duration pingDelay = Duration.zero;
+
+  /// 收到的全部 PING。
+  final List<DevicePing> receivedPings = <DevicePing>[];
+
   /// 是否自动回复命令 (false 时完全不回复，模拟响应丢失)。
   bool autoRespond = true;
 
@@ -176,6 +185,24 @@ class FakeBleDevice implements BleTransport {
                 error: const DeviceError(code: 5001, message: 'resource not found'),
               );
           sendMessage(FrameType.resourceResponse, _codec.encode(response));
+        case FrameType.ping:
+          final ping = _codec.decode(frameType, message) as DevicePing;
+          receivedPings.add(ping);
+          final handler = onPing;
+          final pong =
+              handler == null ? DevicePong(requestId: ping.requestId) : handler(ping);
+          if (pong != null) {
+            void reply() => sendMessage(FrameType.pong, _codec.encode(pong));
+            if (pingDelay == Duration.zero) {
+              reply();
+            } else {
+              Future<void>.delayed(pingDelay, () {
+                if (!_notifications.isClosed) {
+                  reply();
+                }
+              });
+            }
+          }
         default:
           break;
       }

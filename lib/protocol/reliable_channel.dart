@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import '../ble/ble_transport.dart';
+import '../core/app_log.dart';
+import '../core/device_stats.dart';
 import 'ble_frame.dart';
 import 'fragment.dart';
 import 'frame_stream_decoder.dart';
@@ -43,10 +45,20 @@ class ReliableChannel {
     this.maxRetry = 3,
     this.ackTimeout = const Duration(seconds: 2),
     this.assembleTimeout = const Duration(seconds: 5),
-  }) : _assembler = FragmentAssembler(timeout: assembleTimeout);
+    DeviceStats? stats,
+    AppLog? log,
+  })  : stats = stats ?? DeviceStats(),
+        log = log ?? AppLog.instance,
+        _assembler = FragmentAssembler(timeout: assembleTimeout);
 
   final BleTransport transport;
   final Fragmenter fragmenter;
+
+  /// 通信统计 (Phase 12 §28/§33 埋点)。
+  final DeviceStats stats;
+
+  /// 日志 (Phase 12 §31)。
+  final AppLog log;
 
   /// 最大重发次数 (§9.2)：总发送次数 = maxRetry + 1。
   final int maxRetry;
@@ -94,7 +106,10 @@ class ReliableChannel {
       onIncomingDiscard?.call(msgId, reason);
     };
     _decoder.onFrame = _handleFrame;
-    _sub = transport.notifications.listen(_decoder.add);
+    _sub = transport.notifications.listen((data) {
+      stats.addRx(data.length);
+      _decoder.add(data);
+    });
   }
 
   /// 入队发送一条消息，返回分配的 MSG_ID。
@@ -131,10 +146,22 @@ class ReliableChannel {
 
   Future<void> _transmit(_PendingSend pending) async {
     pending.transmissions++;
+    if (pending.transmissions > 1) {
+      stats.addRetry();
+      log.debug('BLE', '重发 msgId=${pending.msgId} (第 ${pending.transmissions} 次)');
+    }
     try {
       for (final frame in pending.frames) {
-        await transport.write(frame.encode());
+        final bytes = frame.encode();
+        stats.addTx(bytes.length);
+        await transport.write(bytes);
       }
+      log.debug(
+        'BLE',
+        '发送 msgId=${pending.msgId} ${pending.frames.length} 帧 '
+        '${pending.frames.fold<int>(0, (sum, f) => sum + f.payload.length)}B payload',
+        seq: pending.frames.first.sequence,
+      );
       pending.timer = Timer(ackTimeout, () => _onAckTimeout(pending));
     } catch (e) {
       _fail(pending, e);
@@ -184,6 +211,7 @@ class ReliableChannel {
       return; // 未知 / 迟到 ACK：忽略
     }
     if (nack) {
+      log.warn('BLE', '收到 NACK msgId=$msgId');
       _fail(pending, StateError('收到 NACK (msgId=$msgId)'));
     } else {
       _complete(pending);

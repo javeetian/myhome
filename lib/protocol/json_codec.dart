@@ -59,6 +59,12 @@ class JsonCodec implements MessageCodec {
       DeviceStateRequest m => <String, dynamic>{
           'request_id': m.requestId,
         },
+      DevicePing m => <String, dynamic>{
+          'request_id': m.requestId,
+        },
+      DevicePong m => <String, dynamic>{
+          'request_id': m.requestId,
+        },
     };
     return utf8.encode(jsonEncode(json));
   }
@@ -113,6 +119,12 @@ class JsonCodec implements MessageCodec {
           error: _optionalError(json),
         ),
       FrameType.stateRequest => DeviceStateRequest(
+          requestId: _requireInt(json, 'request_id'),
+        ),
+      FrameType.ping => DevicePing(
+          requestId: _requireInt(json, 'request_id'),
+        ),
+      FrameType.pong => DevicePong(
           requestId: _requireInt(json, 'request_id'),
         ),
       _ => throw ProtocolException(

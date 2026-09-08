@@ -9,6 +9,7 @@ import '../device/device_client.dart';
 import '../device/device_session.dart';
 import '../protocol/protocol_messages.dart';
 import 'ble_provider.dart';
+import 'device_manager_provider.dart';
 
 /// 设备会话控制器 (WORK_V2 §12.4/§12.5 的单会话形态)。
 ///
@@ -22,6 +23,9 @@ class DeviceSessionController extends Notifier<DeviceSession> {
   DeviceClient? _client;
   StreamSubscription<DeviceState>? _stateSub;
   StreamSubscription<BleConnectionState>? _connSub;
+
+  /// 心跳间隔 (Phase 12 §22 扩展；测试可缩短)。
+  static Duration heartbeatInterval = const Duration(seconds: 10);
 
   @override
   DeviceSession build() {
@@ -60,14 +64,19 @@ class DeviceSessionController extends Notifier<DeviceSession> {
       state = state.copyWith(phase: ConnectionPhase.syncingState);
       await client.syncState();
       _wireSession(client, resolved);
+      // 心跳 (Phase 12 §22 扩展)：失联 → 断线流程 (§20)
+      client.onConnectionLost = _onConnectionLost;
+      client.startHeartbeat(interval: heartbeatInterval);
       state = state.copyWith(
         phase: ConnectionPhase.connected,
         deviceState: client.currentState,
         clearError: true,
       );
+      ref.read(deviceManagerProvider.notifier).upsert(state);
     } catch (e) {
       _unwire();
       state = state.copyWith(phase: ConnectionPhase.error, error: '$e');
+      ref.read(deviceManagerProvider.notifier).upsert(state);
       await client.dispose();
       _client = null;
     }
@@ -79,11 +88,38 @@ class DeviceSessionController extends Notifier<DeviceSession> {
     if (client == null) {
       return;
     }
+    final deviceId = state.deviceId;
     state = state.copyWith(phase: ConnectionPhase.disconnecting);
     _unwire();
     await client.disconnect();
     _client = null;
+    if (deviceId != null) {
+      ref.read(deviceManagerProvider.notifier).upsert(DeviceSession(
+            phase: ConnectionPhase.disconnected,
+            deviceId: deviceId,
+          ));
+    }
     state = const DeviceSession.none();
+  }
+
+  /// 心跳判定失联 (Phase 12) → 断线流程 (§20)。
+  void _onConnectionLost() {
+    final client = _client;
+    final deviceId = state.deviceId;
+    if (client == null || deviceId == null) {
+      return;
+    }
+    _unwire();
+    _client = null;
+    final snapshot = DeviceSession(
+      phase: ConnectionPhase.disconnected,
+      deviceId: deviceId,
+      client: state.client,
+      deviceState: state.deviceState,
+    );
+    state = snapshot;
+    ref.read(deviceManagerProvider.notifier).upsert(snapshot);
+    unawaited(client.dispose());
   }
 
   /// 由外部阶段事件推进状态 (§12.6)：

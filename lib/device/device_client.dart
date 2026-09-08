@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import '../ble/ble_transport.dart';
+import '../core/app_log.dart';
+import '../core/device_stats.dart';
 import '../protocol/codec.dart';
 import '../protocol/fragment.dart';
 import '../protocol/json_codec.dart';
@@ -32,14 +34,20 @@ class DeviceClient {
     Duration assembleTimeout = const Duration(seconds: 5),
     this.commandTimeout = const Duration(seconds: 8),
     this.resourceTimeout = const Duration(seconds: 60),
+    DeviceStats? stats,
+    AppLog? log,
   })  : _deviceId = deviceId,
         _codec = codec,
+        stats = stats ?? DeviceStats(),
+        log = log ?? AppLog.instance,
         _channel = ReliableChannel(
           transport: transport,
           fragmenter: Fragmenter(mtu: mtu),
           maxRetry: maxRetry,
           ackTimeout: ackTimeout,
           assembleTimeout: assembleTimeout,
+          stats: stats,
+          log: log,
         ) {
     _channel.onSendError = (msgId, error) {
       onSendError?.call(msgId, error);
@@ -50,11 +58,28 @@ class DeviceClient {
   final MessageCodec _codec;
   final ReliableChannel _channel;
 
+  /// 通信统计 (Phase 12 §28/§33)。
+  final DeviceStats stats;
+
+  /// 日志 (Phase 12 §31)。
+  final AppLog log;
+
   /// 设备标识 (UI Adapter 的 /api/device 使用)。
   String get deviceId => _deviceId;
 
   /// 最近一次 HELLO_ACK (握手结果, §39)。
   DeviceHelloAck? get helloAck => _helloAck;
+
+  /// 心跳失联回调 (连续多次无 PONG 触发, Phase 12 §22 扩展)。
+  /// 由会话层接入断线流程 (§20)。
+  void Function()? onConnectionLost;
+
+  Timer? _heartbeatTimer;
+  Completer<void>? _pongPending;
+  bool _heartbeatRunning = false;
+  int _missedPongs = 0;
+  int _heartbeatSeq = 0;
+  int _heartbeatMissedThreshold = 3;
 
   /// 命令响应超时 (设备 ACK 后迟迟不回业务响应)。
   final Duration commandTimeout;
@@ -114,6 +139,8 @@ class DeviceClient {
     _channel.start(); // 先订阅通知流，避免丢失早期帧
     await _channel.transport.connect(_deviceId);
     _connected = true;
+    stats.markConnected();
+    log.info('DEVICE', '已连接', deviceId: _deviceId);
     _channel.messages.listen(_onIncomingMessage);
   }
 
@@ -121,10 +148,85 @@ class DeviceClient {
   /// 状态存储同步清空 (§21：重连不能直接恢复旧状态，必须重新同步)。
   Future<void> disconnect() async {
     _connected = false;
+    stopHeartbeat();
     _stateVersion = 0;
     _stateMap = <String, dynamic>{};
     _failAllPending(StateError('设备已断开'));
+    log.info('DEVICE', '已断开', deviceId: _deviceId);
     await _channel.transport.disconnect();
+  }
+
+  /// 启动心跳 (Phase 12 §22 扩展)：定期 PING，连续
+  /// [missedThreshold] 次无 PONG → [onConnectionLost]。
+  void startHeartbeat({
+    Duration interval = const Duration(seconds: 10),
+    int missedThreshold = 3,
+  }) {
+    if (_heartbeatRunning) {
+      return;
+    }
+    _heartbeatRunning = true;
+    _missedPongs = 0;
+    _heartbeatMissedThreshold = missedThreshold;
+    _heartbeatTimer = Timer.periodic(interval, (_) => unawaited(_sendPing()));
+    unawaited(_sendPing()); // 立即发第一个
+  }
+
+  void stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _heartbeatRunning = false;
+    final pending = _pongPending;
+    if (pending != null && !pending.isCompleted) {
+      pending.complete(); // 防悬挂
+    }
+    _pongPending = null;
+  }
+
+  Future<void> _sendPing() async {
+    if (!_connected || !_heartbeatRunning) {
+      return;
+    }
+    if (_pongPending != null) {
+      _registerMissedPong(); // 上一次还没回
+      return;
+    }
+    final requestId = ++_heartbeatSeq;
+    final completer = Completer<void>();
+    _pongPending = completer;
+    final message = DevicePing(requestId: requestId);
+    try {
+      await _channel.send(
+        _codec.encode(message),
+        frameType: message.frameType,
+      );
+      log.trace('DEVICE', 'PING', deviceId: _deviceId, requestId: requestId);
+      await completer.future.timeout(
+        _heartbeatTimer == null
+            ? const Duration(seconds: 5)
+            : Duration(milliseconds: 200), // 心跳间隔由定时器保证，这里仅兜底
+      );
+      _missedPongs = 0;
+    } catch (_) {
+      _registerMissedPong();
+    } finally {
+      _pongPending = null;
+    }
+  }
+
+  void _registerMissedPong() {
+    _missedPongs++;
+    log.warn('DEVICE', 'PONG 丢失 ($_missedPongs/$_heartbeatMissedThreshold)',
+        deviceId: _deviceId);
+    if (_missedPongs >= _heartbeatMissedThreshold) {
+      _handleConnectionLost();
+    }
+  }
+
+  void _handleConnectionLost() {
+    stopHeartbeat();
+    log.error('DEVICE', '心跳失联，判定设备离线', deviceId: _deviceId);
+    onConnectionLost?.call();
   }
 
   void _onIncomingMessage(IncomingMessage message) {
@@ -170,6 +272,15 @@ class DeviceClient {
       case DeviceResourceRequest _:
       case DeviceStateRequest _:
         // 设备不应主动发这些消息 (MVP 忽略)
+        break;
+      case DevicePing _:
+        // 设备不应主动发 PING (MVP 忽略)
+        break;
+      case DevicePong _:
+        final pending = _pongPending;
+        if (pending != null && !pending.isCompleted) {
+          pending.complete();
+        }
         break;
     }
   }
@@ -362,6 +473,7 @@ class DeviceClient {
     if (!_connected) {
       throw StateError('未连接');
     }
+    final stopwatch = Stopwatch()..start();
     final requestId = _nextRequestId++;
     final completer = Completer<DeviceResponse>();
     _pending[requestId] = completer;
@@ -373,13 +485,22 @@ class DeviceClient {
       _pending.remove(requestId);
       rethrow;
     }
-    return completer.future.timeout(
+    final response = await completer.future.timeout(
       commandTimeout,
       onTimeout: () {
         _pending.remove(requestId);
         throw TimeoutException('命令响应超时 (request_id=$requestId, cmd=$cmd)');
       },
     );
+    stopwatch.stop();
+    stats.recordCommandLatency(stopwatch.elapsed);
+    log.debug(
+      'DEVICE',
+      '命令 $cmd → ${response.status} (${stopwatch.elapsedMilliseconds}ms)',
+      deviceId: _deviceId,
+      requestId: requestId,
+    );
+    return response;
   }
 
   /// 获取设备状态 (§16.6)：未同步过则主动请求全量。
@@ -412,6 +533,7 @@ class DeviceClient {
   /// 释放全部资源。
   Future<void> dispose() async {
     _connected = false;
+    stopHeartbeat();
     _failAllPending(StateError('client disposed'));
     await _channel.dispose();
     await _events.close();

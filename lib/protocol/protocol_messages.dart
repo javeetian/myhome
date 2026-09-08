@@ -202,3 +202,23 @@ class DeviceStateRequest extends ProtocolMessage {
   @override
   int get frameType => FrameType.stateRequest;
 }
+
+/// PING 心跳 (App → 设备, §22 序列扩展)：设备应回 PONG。
+class DevicePing extends ProtocolMessage {
+  const DevicePing({required this.requestId});
+
+  final int requestId;
+
+  @override
+  int get frameType => FrameType.ping;
+}
+
+/// PONG 心跳应答 (设备 → App)。
+class DevicePong extends ProtocolMessage {
+  const DevicePong({required this.requestId});
+
+  final int requestId;
+
+  @override
+  int get frameType => FrameType.pong;
+}

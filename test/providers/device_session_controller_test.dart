@@ -185,6 +185,24 @@ void main() {
     expect(container.read(deviceClientProvider)!.hasState, isTrue);
   });
 
+  test('心跳失联 → 会话 disconnected (§20, Phase 12)', () async {
+    DeviceSessionController.heartbeatInterval =
+        const Duration(milliseconds: 50);
+    addTearDown(() {
+      DeviceSessionController.heartbeatInterval =
+          const Duration(seconds: 10);
+    });
+    device.onPing = (_) => null; // 设备不回 PONG
+    final notifier = container.read(deviceSessionProvider.notifier);
+    await notifier.connect('dev-1');
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.connected);
+
+    await waitFor(() =>
+        container.read(connectionPhaseProvider) == ConnectionPhase.disconnected);
+    // 快照保留旧 client 引用 (供调试面板读取统计, §33)
+    expect(container.read(deviceClientProvider), isNotNull);
+  });
+
   test('setPhase: loadingUi → connected (Phase 9 UI 加载)', () async {
     final notifier = container.read(deviceSessionProvider.notifier);
     await notifier.connect('dev-1');
