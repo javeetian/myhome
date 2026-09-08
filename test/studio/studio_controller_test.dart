@@ -139,6 +139,42 @@ void main() {
     expect(container.read(studioControllerProvider).currentState, isNotNull);
   });
 
+  test('Smart Light：构建产物缺失时现场打包 (QUICKSTART §2)', () async {
+    // 注入临时路径配置
+    final uiDir = Directory('${tempDir.path}/smart_light_ui');
+    uiDir.createSync();
+    File('${uiDir.path}/manifest.json').writeAsStringSync(jsonEncode(<String, dynamic>{
+      'package': 'light_ui',
+      'version': '1.0.0',
+      'device': <String, dynamic>{'type': 'light', 'model': 'L100'},
+      'protocol': <String, dynamic>{'version': 1},
+      'entry': 'index.html',
+    }));
+    File('${uiDir.path}/index.html').writeAsStringSync('<html>fresh</html>');
+    final pkgPath = '${tempDir.path}/out/ui.pkg';
+
+    StudioController.smartLightUiDir = uiDir.path;
+    StudioController.smartLightPkgPath = pkgPath;
+    addTearDown(() {
+      StudioController.smartLightUiDir = 'devices/smart_light/ui';
+      StudioController.smartLightPkgPath = 'devices/smart_light/build/ui.pkg';
+    });
+
+    final notifier = container.read(studioControllerProvider.notifier);
+    expect(File(pkgPath).existsSync(), isFalse);
+    final pkg = await notifier.loadSmartLightPkg();
+    expect(pkg, isNotNull);
+    expect(File(pkgPath).existsSync(), isTrue, reason: '现场打包产物落盘');
+
+    // 产物就绪后启动 → UI 正常 (staticRoot 非空)
+    final ok = await notifier.start(VirtualLight(uiPkgBytes: pkg));
+    expect(ok, isTrue);
+    expect(
+      File('${tempDir.path}/light/L100/1.0.0/index.html').existsSync(),
+      isTrue,
+    );
+  });
+
   test('UI Hot Reload：源文件变化 → 重打包 → reloadCount++ (Phase 37)', () async {
     // 建 UI 源目录
     final uiDir = Directory('${tempDir.path}/ui_src');

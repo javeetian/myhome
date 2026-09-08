@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -74,20 +73,17 @@ class _DeviceListPanel extends ConsumerWidget {
             deviceId: VirtualLight().deviceId,
             isRunning: currentDeviceId == VirtualLight().deviceId && studio.isRunning,
             onStart: () async {
-              // 尝试加载构建产物 ui.pkg (若存在)
-              final pkgFile = File('devices/smart_light/build/ui.pkg');
-              final pkg = pkgFile.existsSync()
-                  ? pkgFile.readAsBytesSync()
-                  : null;
-              final ok = await ref
-                  .read(studioControllerProvider.notifier)
-                  .start(VirtualLight(uiPkgBytes: pkg));
+              // 构建产物缺失时从源目录现场打包 (QUICKSTART §2 免前提)
+              final notifier = ref.read(studioControllerProvider.notifier);
+              final pkg = await notifier.loadSmartLightPkg();
+              final ok =
+                  await notifier.start(VirtualLight(uiPkgBytes: pkg));
               if (ok) {
                 // UI Hot Reload (Phase 37)：源目录变化 → 自动重打包重载
-                ref.read(studioControllerProvider.notifier).startUiWatch(
-                      'devices/smart_light/ui',
-                      'devices/smart_light/build/ui.pkg',
-                    );
+                notifier.startUiWatch(
+                  StudioController.smartLightUiDir,
+                  StudioController.smartLightPkgPath,
+                );
               }
             },
           ),

@@ -190,6 +190,43 @@ class StudioController extends Notifier<StudioState> {
     return cache.store(deviceType, deviceModel, device.uiVersion, pkgBytes);
   }
 
+  /// Smart Light UI 源目录 (Phase 13/37；相对项目根，测试可注入)。
+  static String smartLightUiDir = 'devices/smart_light/ui';
+
+  /// Smart Light ui.pkg 构建产物路径。
+  static String smartLightPkgPath = 'devices/smart_light/build/ui.pkg';
+
+  /// 加载 Smart Light UI 包：优先构建产物；不存在则从源目录现场打包。
+  /// 返回 null = 无 UI (纯协议调试模式)。
+  Future<Uint8List?> loadSmartLightPkg() async {
+    final pkgFile = File(smartLightPkgPath);
+    if (pkgFile.existsSync()) {
+      return Uint8List.fromList(pkgFile.readAsBytesSync());
+    }
+    final uiDir = Directory(smartLightUiDir);
+    if (!uiDir.existsSync()) {
+      return null;
+    }
+    final files = <String, Uint8List>{};
+    for (final entity in uiDir.listSync(recursive: true)) {
+      if (entity is! File) {
+        continue;
+      }
+      final rel = p
+          .relative(entity.path, from: uiDir.path)
+          .replaceAll('\\', '/');
+      files[rel] = Uint8List.fromList(entity.readAsBytesSync());
+    }
+    if (!files.containsKey('manifest.json')) {
+      return null;
+    }
+    final pkg = UiPackage.pack(files);
+    pkgFile.parent.createSync(recursive: true);
+    pkgFile.writeAsBytesSync(pkg);
+    _appendLog('INFO UI 从源目录现场打包 (${files.length} 文件)');
+    return pkg;
+  }
+
   /// UI Hot Reload (Phase 37)：监听 UI 源目录 → 自动重打包 → 重载 WebView。
   void startUiWatch(String sourceDir, String outPkg) {
     stopUiWatch();

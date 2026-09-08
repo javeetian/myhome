@@ -136,6 +136,9 @@ class VirtualLight extends ProtocolDevice {
     if (uiPkgBytes == null) {
       return null;
     }
+    if (path == 'ui.pkg') {
+      return uiPkgBytes; // 整个包 (与 DemoDevice 语义一致, §27)
+    }
     _uiFiles ??= UiPackage.unpack(uiPkgBytes!);
     return _uiFiles![path];
   }
