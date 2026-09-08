@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../device/demo_device.dart';
 import '../device/virtual_light.dart';
+import '../simulator/fault_injector.dart';
 import '../ui_runtime/webview_host.dart';
 import 'studio_controller.dart';
 
@@ -242,6 +243,13 @@ class _InspectorPanel extends ConsumerWidget {
           Text('Command', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 4),
           ..._commandButtons(context, ref),
+          if (studio.faultInjector != null) ...<Widget>[
+            const Divider(),
+            _FaultInjectionPanel(
+              key: ValueKey<FaultInjector>(studio.faultInjector!),
+              injector: studio.faultInjector!,
+            ),
+          ],
         ],
       ),
     );
@@ -308,5 +316,80 @@ class _InspectorPanel extends ConsumerWidget {
       ];
     }
     return const <Widget>[];
+  }
+}
+
+/// Fault Injection 面板 (WORK_V3 §32)。
+/// 局部状态管理滑块值，onChanged 同步注入器参数。
+class _FaultInjectionPanel extends StatefulWidget {
+  const _FaultInjectionPanel({super.key, required this.injector});
+
+  final FaultInjector injector;
+
+  @override
+  State<_FaultInjectionPanel> createState() => _FaultInjectionPanelState();
+}
+
+class _FaultInjectionPanelState extends State<_FaultInjectionPanel> {
+  double _loss = 0;
+  double _delay = 0;
+  double _dup = 0;
+  double _crc = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final injector = widget.injector;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text('Fault Injection', style: Theme.of(context).textTheme.titleSmall),
+        _slider('丢包 %', _loss, (v) {
+          setState(() => _loss = v);
+          injector.txPacketLoss = v / 100;
+        }),
+        _slider('延迟 ms', _delay, (v) {
+          setState(() => _delay = v);
+          injector.txDelay = Duration(milliseconds: v.round());
+        }, max: 500),
+        _slider('重复 %', _dup, (v) {
+          setState(() => _dup = v);
+          injector.txDuplicateRate = v / 100;
+        }),
+        _slider('CRC 损坏 %', _crc, (v) {
+          setState(() => _crc = v);
+          injector.txCrcErrorRate = v / 100;
+        }),
+        const SizedBox(height: 6),
+        FilledButton(
+          onPressed: () => injector.disconnectOnNextWrite = true,
+          child: const Text('注入断开 (下次写入)'),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '已注入: 丢${injector.injectedLoss} 重${injector.injectedDuplicate} '
+          '坏${injector.injectedCrcError}',
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
+      ],
+    );
+  }
+
+  Widget _slider(String label, double value, ValueChanged<double> onChanged,
+      {double max = 100}) {
+    return Row(
+      children: <Widget>[
+        Expanded(
+          child: Text('$label ${value.round()}', style: const TextStyle(fontSize: 11)),
+        ),
+        Expanded(
+          flex: 2,
+          child: Slider(
+            value: value,
+            max: max,
+            onChanged: onChanged,
+          ),
+        ),
+      ],
+    );
   }
 }

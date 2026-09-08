@@ -49,10 +49,10 @@ Phase 17 WebSocket                                    ✅ 复用 V2
 Phase 18 Device Studio                                ✅ 完成 (2026-09-08)
 Phase 19 Inspector                                    ✅ 完成 (2026-09-08)
 Phase 20 Protocol Console                             ✅ 完成 (2026-09-08)
-Phase 21 Fault Injection                              🟡 (内核在测试 Fake，待产品化)
-Phase 22 Reconnect                                    🟡 (待加 reconnecting 状态)
-Phase 23 State / Patch                                ✅ 复用 V2
-Phase 24 Command Queue (Replaceable)                  🟡 (待实现)
+Phase 21 Fault Injection                              ✅ 完成 (2026-09-08)
+Phase 22 Reconnect                                    ✅ 完成 (2026-09-08)
+Phase 23 State / Patch                                ✅ 复用 V2 (回归通过)
+Phase 24 Command Queue (Replaceable)                  ✅ 完成 (2026-09-08)
 Phase 25 Code Generator                               ⬜
 Phase 26 C Device SDK                                 ⬜
 Phase 27 Hardware Adapter                             ⬜
@@ -292,5 +292,45 @@ Load UI Package ✅ / Select Device ✅ / Start Simulator ✅ / Run UI ✅ (WebV
 
 - Studio 真机视觉验证（WebView2 渲染/交互）待用户桌面运行确认
 - UI Hot Reload (Phase 37)、故障注入面板 (Phase 21) 待后续 Phase
+
+---
+
+## Phase 21-24 — Fault Injection / Reconnect / Replaceable ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无
+
+### 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/simulator/fault_injector.dart | §32 | 丢包/延迟/重复/CRC 损坏/写入时断开 + 注入计数；Studio 面板操控 |
+| lib/device/connection_phase.dart | §36 | ConnectionPhase.reconnecting |
+| lib/providers/device_session_provider.dart | §36 | 自动重连：断线/失联 → reconnecting → backoff 重试 (静态可调) → connected / disconnected(耗尽) |
+| lib/ui/pages/device_page.dart | §20 | 重连提示 + 成功后重启 UI Server 重载 WebView (entryUrl key) |
+| lib/protocol/reliable_channel.dart | §39 | send(replaceKey)：排队同键消息被替换；**修复 App→设备 ACK 缺失** (双向可靠传输) |
+| lib/protocol/fragment.dart | §7.4/§21 | 完成记录去重 + onDuplicate 回调 (重复帧重发 ACK) + reset() |
+| lib/device/protocol_device.dart | §21 | emitDisconnected() (模拟掉线) + 断线协议栈复位 + 重复帧重发 ACK |
+| lib/studio/studio_home_page.dart | §32 | Fault Injection 面板 (滑块 + 注入断开按钮) |
+| lib/device/device_client.dart | 修复 | stats/log 与通道共享实例 (参数遮蔽 bug) |
+
+### 过程中修复的问题（协议层深度修复）
+
+1. **App→设备 ACK 缺失**（Phase 4 遗留）：设备→App 的消息 App 从不 ACK，
+   设备无重试依据。修复：ReliableChannel 组装完成后自动发 ACK。
+2. **重复帧语义**：组装完成的消息重复到达被静默忽略 → 发送端重试死循环。
+   修复：onDuplicate 回调 → 接收端重发 ACK (§7.4 去重语义)。
+3. **新会话 MSG_ID 冲突**：断线重连后新会话 msgId 从 0 起，设备侧完成记录
+   未清 → HELLO 被误判为重复帧卡死握手。修复：断线时协议栈 reset (§21)。
+4. **stats/log 参数遮蔽**：DeviceClient 构造参数与字段同名，channel 收到 null
+   自建实例 → 统计分叉。修复：stats/log 改为透传 channel 实例。
+
+### 验证（新增 9 例，全套 247/247）
+
+| 用例 | 结果 |
+|---|---|
+| FaultInjector：丢包重试耗尽 / 延迟 / CRC 全坏 / 重复去重 / 注入断开 | ✅ 5+1 |
+| 会话：断线自动重连成功 / 拒绝重连耗尽 disconnected / 心跳失联 | ✅ 3 |
+| Replaceable：连发 5 条同键命令 → 中间 3 条被替换，设备仅收首尾 | ✅ 1 |
 
 ---

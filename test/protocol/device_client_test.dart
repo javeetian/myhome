@@ -275,6 +275,36 @@ void main() {
     });
   });
 
+  group('Phase 24 Replaceable 命令队列 (§39)', () {
+    test('快速连发同键命令 → 中间被替换，只发首尾', () async {
+      device.ackDelay = const Duration(milliseconds: 100); // 保持 inflight
+      await waitFor(() => client.hasState);
+
+      final results = await Future.wait<Object>([
+        for (var i = 1; i <= 5; i++)
+          client
+              .command('set_brightness',
+                  <String, dynamic>{'value': i * 10},
+                  replaceKey: 'brightness')
+              .then<Object>((r) => r)
+              .catchError((Object e) => e),
+      ]);
+
+      // 第 1 条发出 (inflight)；2-4 被 5 替换；5 排队后发出
+      final replaced = results.whereType<StateError>().toList();
+      expect(replaced.length, 3, reason: '中间 3 条被替换');
+      for (final error in replaced) {
+        expect(error.message, contains('已被新命令替换'));
+      }
+      final responses = results.whereType<DeviceResponse>().toList();
+      expect(responses.length, 2, reason: '首尾两条成功');
+
+      // 设备实际只收到 2 条命令 (第一条 + 最后一条)
+      expect(device.receivedCommands.length, 2);
+      expect(device.receivedCommands.last.params['value'], 50);
+    });
+  });
+
   group('连接状态与边界', () {
     test('未连接时 command 抛 StateError', () async {
       final offline = DeviceClient(transport: device, deviceId: 'dev-1');

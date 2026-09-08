@@ -20,5 +20,8 @@ enum ConnectionPhase {
   syncingState,
   connected,
   disconnecting,
+
+  /// 断线后自动重连中 (Phase 22, FRAMEWORK_V3 §36)。
+  reconnecting,
   error,
 }

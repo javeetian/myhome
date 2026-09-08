@@ -21,11 +21,19 @@ import 'device_manager_provider.dart';
 /// 多设备 DeviceManager (会话 Map) 待多设备需求 (Phase 12/云阶段) 实现。
 class DeviceSessionController extends Notifier<DeviceSession> {
   DeviceClient? _client;
+  BleTransport? _transport;
   StreamSubscription<DeviceState>? _stateSub;
   StreamSubscription<BleConnectionState>? _connSub;
+  bool _reconnecting = false;
 
   /// 心跳间隔 (Phase 12 §22 扩展；测试可缩短)。
   static Duration heartbeatInterval = const Duration(seconds: 10);
+
+  /// 重连退避基数 (Phase 22；测试可缩短)。
+  static Duration reconnectBaseDelay = const Duration(milliseconds: 500);
+
+  /// 最大重连尝试次数 (Phase 22)。
+  static int maxReconnectAttempts = 3;
 
   @override
   DeviceSession build() {
@@ -47,6 +55,7 @@ class DeviceSessionController extends Notifier<DeviceSession> {
     } else {
       resolved = ref.read(bleTransportProvider);
     }
+    _transport = resolved;
     final client = DeviceClient(transport: resolved, deviceId: deviceId);
     _client = client;
     state = DeviceSession(
@@ -91,6 +100,7 @@ class DeviceSessionController extends Notifier<DeviceSession> {
     final deviceId = state.deviceId;
     state = state.copyWith(phase: ConnectionPhase.disconnecting);
     _unwire();
+    _transport = null;
     await client.disconnect();
     _client = null;
     if (deviceId != null) {
@@ -102,6 +112,73 @@ class DeviceSessionController extends Notifier<DeviceSession> {
     state = const DeviceSession.none();
   }
 
+  /// 断线触发点 (设备侧断开 / 心跳失联) → 自动重连 (Phase 22, FRAMEWORK_V3 §36)。
+  void _startReconnect() {
+    if (_reconnecting || _transport == null) {
+      return;
+    }
+    _reconnecting = true;
+    _unwire();
+    final deviceId = state.deviceId;
+    if (deviceId == null) {
+      _reconnecting = false;
+      return;
+    }
+    state = state.copyWith(phase: ConnectionPhase.reconnecting);
+    unawaited(_reconnectLoop(deviceId));
+  }
+
+  /// 重连循环：backoff 重试 → 成功恢复会话；耗尽 → disconnected。
+  Future<void> _reconnectLoop(String deviceId) async {
+    final transport = _transport;
+    final oldClient = _client;
+    try {
+      for (var attempt = 1; attempt <= maxReconnectAttempts; attempt++) {
+        await Future<void>.delayed(
+            reconnectBaseDelay * (1 << (attempt - 1)));
+        // 用户已主动断开 → 放弃重连
+        if (state.phase != ConnectionPhase.reconnecting) {
+          return;
+        }
+        final client = DeviceClient(transport: transport!, deviceId: deviceId);
+        try {
+          await client.connect();
+          state = state.copyWith(phase: ConnectionPhase.handshaking);
+          await client.hello();
+          state = state.copyWith(phase: ConnectionPhase.syncingState);
+          await client.syncState();
+          // 重连成功：替换会话
+          unawaited(oldClient?.dispose() ?? Future<void>.value());
+          _client = client;
+          client.onConnectionLost = _onConnectionLost;
+          client.startHeartbeat(interval: heartbeatInterval);
+          _wireSession(client, transport);
+          state = state.copyWith(
+            phase: ConnectionPhase.connected,
+            deviceState: client.currentState,
+            clearError: true,
+          );
+          ref.read(deviceManagerProvider.notifier).upsert(state);
+          return;
+        } catch (_) {
+          await client.dispose();
+          // 继续下一次尝试
+        }
+      }
+      // 重连耗尽 → disconnected
+      _client = null;
+      final snapshot = DeviceSession(
+        phase: ConnectionPhase.disconnected,
+        deviceId: deviceId,
+        deviceState: state.deviceState,
+      );
+      state = snapshot;
+      ref.read(deviceManagerProvider.notifier).upsert(snapshot);
+    } finally {
+      _reconnecting = false;
+    }
+  }
+
   /// 心跳判定失联 (Phase 12) → 断线流程 (§20)。
   void _onConnectionLost() {
     final client = _client;
@@ -109,17 +186,7 @@ class DeviceSessionController extends Notifier<DeviceSession> {
     if (client == null || deviceId == null) {
       return;
     }
-    _unwire();
-    _client = null;
-    final snapshot = DeviceSession(
-      phase: ConnectionPhase.disconnected,
-      deviceId: deviceId,
-      client: state.client,
-      deviceState: state.deviceState,
-    );
-    state = snapshot;
-    ref.read(deviceManagerProvider.notifier).upsert(snapshot);
-    unawaited(client.dispose());
+    _startReconnect();
   }
 
   /// 由外部阶段事件推进状态 (§12.6)：
@@ -139,17 +206,11 @@ class DeviceSessionController extends Notifier<DeviceSession> {
     _stateSub = client.states.listen((deviceState) {
       state = state.copyWith(deviceState: deviceState);
     });
-    // 设备侧主动断线 → 会话回到 disconnected (§20)
+    // 设备侧主动断线 → 自动重连 (Phase 22, §20/§36)
     _connSub = transport.connectionStates.listen((connectionState) {
       if (connectionState == BleConnectionState.disconnected &&
           state.phase == ConnectionPhase.connected) {
-        state = DeviceSession(
-          phase: ConnectionPhase.disconnected,
-          deviceId: state.deviceId,
-          client: state.client,
-          deviceState: state.deviceState,
-        );
-        _client = null;
+        _startReconnect();
       }
     });
   }

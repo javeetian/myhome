@@ -151,7 +151,17 @@ class FragmentAssembler {
   /// 消息被丢弃回调 (msgId 可能为 null：Payload 短于 Fragment 头)。
   void Function(int? msgId, String reason)? onDiscard;
 
+  /// 重复帧回调：已完成消息的帧再次到达 (发送端重发)。
+  /// 接收端应重发 ACK 以确认 (§7.4 去重语义)。
+  void Function(int msgId)? onDuplicate;
+
   final Map<int, _Assembly> _assemblies = <int, _Assembly>{};
+
+  /// 最近完成的消息 (发送端重复帧去重, §8.5)。
+  final Set<int> _completed = <int>{};
+
+  /// 完成记录容量 (超出丢弃最旧)。
+  static const int _completedCapacity = 64;
 
   /// 处理一个数据帧。完成时回调 [onComplete]，异常时回调 [onDiscard]。
   void add(BleFrame frame) {
@@ -162,6 +172,12 @@ class FragmentAssembler {
       data = frame.payload.sublist(FragmentHeader.size);
     } on FragmentException {
       _discard(null, '长度不足');
+      return;
+    }
+
+    // 已组装完成的消息再次到达 (发送端重复) → 通知接收端重发 ACK (§8.5/§7.4)
+    if (_completed.contains(header.msgId)) {
+      onDuplicate?.call(header.msgId);
       return;
     }
 
@@ -211,6 +227,11 @@ class FragmentAssembler {
       }
       _assemblies.remove(header.msgId);
       current.cancel();
+      // 记录已完成消息 (重复帧去重, 发送端重发场景)
+      _completed.add(header.msgId);
+      if (_completed.length > _completedCapacity) {
+        _completed.remove(_completed.first);
+      }
       onComplete?.call(header.msgId, current.frameType, message);
       return;
     }
@@ -221,6 +242,8 @@ class FragmentAssembler {
     if (msgId != null) {
       final assembly = _assemblies.remove(msgId);
       assembly?.cancel();
+      // 丢弃后可重新组装同 MSG_ID (§8.5 超时丢弃语义)
+      _completed.remove(msgId);
     }
     onDiscard?.call(msgId, reason);
   }
@@ -231,6 +254,17 @@ class FragmentAssembler {
       assembly.cancel();
     }
     _assemblies.clear();
+    _completed.clear();
+  }
+
+  /// 会话重置 (§21 重连必须重新建立会话)：
+  /// 清空组装状态与完成记录，避免把新会话的 MSG_ID 误判为重复帧。
+  void reset() {
+    for (final assembly in _assemblies.values) {
+      assembly.cancel();
+    }
+    _assemblies.clear();
+    _completed.clear();
   }
 }
 

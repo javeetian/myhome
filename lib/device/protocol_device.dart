@@ -70,6 +70,8 @@ abstract class ProtocolDevice implements BleTransport {
   ProtocolDevice() {
     _decoder.onFrame = (frame) => _assembler.add(frame);
     _assembler.onComplete = _onMessageAssembled;
+    // 重复帧 (发送端重发) → 重发 ACK (§7.4 去重语义)
+    _assembler.onDuplicate = _sendAckFor;
   }
 
   void _onMessageAssembled(int msgId, int frameType, List<int> message) {
@@ -122,6 +124,11 @@ abstract class ProtocolDevice implements BleTransport {
         break;
     }
     // 传输层 ACK (所有消息)
+    _sendAckFor(msgId);
+  }
+
+  /// 发送 ACK 帧 (入站消息确认, §9.1)。
+  void _sendAckFor(int msgId) {
     _notifications.add(
       BleFrame(
         version: BleFrame.currentVersion,
@@ -172,6 +179,18 @@ abstract class ProtocolDevice implements BleTransport {
 
   // ---- BleTransport (回环侧) ----
 
+  /// 模拟设备主动掉线 (Studio 故障注入 / 断线场景测试)：
+  /// 协议栈复位 + 广播 disconnected (§21)。
+  Future<void> emitDisconnected() async {
+    if (!_connected) {
+      return;
+    }
+    _connected = false;
+    _assembler.reset();
+    await onDeviceDisconnect();
+    _connectionStates.add(BleConnectionState.disconnected);
+  }
+
   @override
   Future<void> connect(String deviceId) async {
     _connected = true;
@@ -181,6 +200,8 @@ abstract class ProtocolDevice implements BleTransport {
   @override
   Future<void> disconnect() async {
     _connected = false;
+    // 会话重置：新会话的 MSG_ID 不得被旧会话完成记录误判为重复 (§21)
+    _assembler.reset();
     await onDeviceDisconnect();
   }
 

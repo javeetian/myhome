@@ -96,12 +96,15 @@ class ReliableChannel {
     }
     _started = true;
     _assembler.onComplete = (msgId, frameType, message) {
+      // 入站消息 ACK 确认 (§9.1 双向)
+      _sendAck(msgId);
       if (!_messages.isClosed) {
         _messages.add(
           IncomingMessage(msgId: msgId, frameType: frameType, data: message),
         );
       }
     };
+    _assembler.onDuplicate = _sendAck; // 重复帧重发 ACK (§7.4 去重语义)
     _assembler.onDiscard = (msgId, reason) {
       onIncomingDiscard?.call(msgId, reason);
     };
@@ -123,14 +126,32 @@ class ReliableChannel {
     List<int> message, {
     int? msgId,
     int frameType = FrameType.command,
+    String? replaceKey,
   }) async {
     final id = msgId ?? (_nextMsgId++ & 0xFFFF);
+    // Replaceable (WORK_V3 §39)：队列中同键的旧消息被替换 (已发出的不可撤回)
+    if (replaceKey != null) {
+      final replaced =
+          _queue.where((p) => p.replaceKey == replaceKey).toList();
+      for (final pending in replaced) {
+        _queue.remove(pending);
+        if (!pending.completer.isCompleted) {
+          pending.completer.completeError(
+            StateError('命令已被新命令替换 (replaceKey=$replaceKey)'),
+          );
+        }
+      }
+    }
     final typedFragmenter = Fragmenter(
       mtu: fragmenter.mtu,
       frameType: frameType,
       sequencer: fragmenter.sequencer,
     );
-    final pending = _PendingSend(id, typedFragmenter.fragment(id, message));
+    final pending = _PendingSend(
+      id,
+      typedFragmenter.fragment(id, message),
+      replaceKey: replaceKey,
+    );
     _queue.add(pending);
     _pump();
     return pending.completer.future;
@@ -208,6 +229,24 @@ class ReliableChannel {
     }
   }
 
+  /// 发送 ACK 帧 (入站消息确认, §9.1 双向)。
+  /// ACK 帧不经过发送队列 (Window=1 仅限业务消息)。
+  void _sendAck(int msgId) {
+    final bytes = BleFrame(
+      version: BleFrame.currentVersion,
+      type: FrameType.ack,
+      flags: 0,
+      sequence: fragmenter.sequencer.next(),
+      payload: <int>[msgId >> 8, msgId & 0xFF],
+    ).encode();
+    stats.addTx(bytes.length);
+    unawaited(
+      transport.write(bytes).catchError((Object _) {
+        // ACK 发送失败忽略 (对方会重发)
+      }),
+    );
+  }
+
   void _handleAck(List<int> payload, {required bool nack}) {
     if (payload.length < 2) {
       return;
@@ -265,11 +304,14 @@ class ReliableChannel {
 
 /// 队列中的一条待发送消息。
 class _PendingSend {
-  _PendingSend(this.msgId, this.frames);
+  _PendingSend(this.msgId, this.frames, {this.replaceKey});
 
   final int msgId;
   final List<BleFrame> frames;
   final Completer<int> completer = Completer<int>();
+
+  /// 替换键 (WORK_V3 §39 Replaceable)：同键排队消息可被新消息替换。
+  final String? replaceKey;
 
   /// 已发送次数 (含重发)。
   int transmissions = 0;

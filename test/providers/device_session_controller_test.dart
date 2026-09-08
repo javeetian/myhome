@@ -107,15 +107,22 @@ void main() {
     expect(session.client, isNull);
   });
 
-  test('设备侧主动断开 → 会话回到 disconnected (§20)', () async {
+  test('设备侧主动断开 → 自动重连；拒绝则 disconnected (§20, Phase 22)', () async {
+    DeviceSessionController.reconnectBaseDelay =
+        const Duration(milliseconds: 30);
+    addTearDown(() {
+      DeviceSessionController.reconnectBaseDelay =
+          const Duration(milliseconds: 500);
+    });
     final notifier = container.read(deviceSessionProvider.notifier);
     await notifier.connect('dev-1');
     expect(container.read(connectionPhaseProvider), ConnectionPhase.connected);
 
     device.emitDisconnected();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-
-    expect(container.read(connectionPhaseProvider), ConnectionPhase.disconnected);
+    device.rejectConnect = true; // 拒绝重连
+    await waitFor(() =>
+        container.read(connectionPhaseProvider) == ConnectionPhase.disconnected,
+        timeout: const Duration(seconds: 2));
   });
 
   test('重复 connect 先释放旧会话', () async {
@@ -188,19 +195,64 @@ void main() {
   test('心跳失联 → 会话 disconnected (§20, Phase 12)', () async {
     DeviceSessionController.heartbeatInterval =
         const Duration(milliseconds: 50);
+    DeviceSessionController.reconnectBaseDelay =
+        const Duration(milliseconds: 30);
     addTearDown(() {
       DeviceSessionController.heartbeatInterval =
           const Duration(seconds: 10);
+      DeviceSessionController.reconnectBaseDelay =
+          const Duration(milliseconds: 500);
     });
     device.onPing = (_) => null; // 设备不回 PONG
     final notifier = container.read(deviceSessionProvider.notifier);
     await notifier.connect('dev-1');
     expect(container.read(connectionPhaseProvider), ConnectionPhase.connected);
+    device.rejectConnect = true; // 失联后拒绝重连 → 稳定 disconnected
 
     await waitFor(() =>
-        container.read(connectionPhaseProvider) == ConnectionPhase.disconnected);
-    // 快照保留旧 client 引用 (供调试面板读取统计, §33)
-    expect(container.read(deviceClientProvider), isNotNull);
+        container.read(connectionPhaseProvider) == ConnectionPhase.disconnected,
+        timeout: const Duration(seconds: 3));
+    // 重连耗尽：旧 client 已释放，快照无 client 引用
+    expect(container.read(deviceClientProvider), isNull);
+  });
+
+  test('设备断线 → 自动重连成功 (Phase 22, FRAMEWORK_V3 §36)', () async {
+    DeviceSessionController.reconnectBaseDelay =
+        const Duration(milliseconds: 50);
+    addTearDown(() {
+      DeviceSessionController.reconnectBaseDelay =
+          const Duration(milliseconds: 500);
+    });
+    final notifier = container.read(deviceSessionProvider.notifier);
+    await notifier.connect('dev-1');
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.connected);
+
+    device.emitDisconnected();
+    // 经过 reconnecting → 重连成功回 connected
+    await waitFor(() =>
+        container.read(connectionPhaseProvider) == ConnectionPhase.reconnecting,
+        timeout: const Duration(seconds: 1));
+    await waitFor(() =>
+        container.read(connectionPhaseProvider) == ConnectionPhase.connected);
+    expect(container.read(deviceClientProvider)!.helloAck, isNotNull);
+    expect(container.read(deviceStateProvider), isNotNull);
+  });
+
+  test('重连耗尽 → disconnected (Phase 22)', () async {
+    DeviceSessionController.reconnectBaseDelay =
+        const Duration(milliseconds: 30);
+    addTearDown(() {
+      DeviceSessionController.reconnectBaseDelay =
+          const Duration(milliseconds: 500);
+    });
+    final notifier = container.read(deviceSessionProvider.notifier);
+    await notifier.connect('dev-1');
+
+    device.emitDisconnected();
+    device.rejectConnect = true; // 设备拒绝重连
+    await waitFor(() =>
+        container.read(connectionPhaseProvider) == ConnectionPhase.disconnected,
+        timeout: const Duration(seconds: 3));
   });
 
   test('setPhase: loadingUi → connected (Phase 9 UI 加载)', () async {
@@ -228,11 +280,19 @@ void main() {
   });
 
   test('setPhase: disconnected 离线态不可覆盖', () async {
+    DeviceSessionController.reconnectBaseDelay =
+        const Duration(milliseconds: 30);
+    addTearDown(() {
+      DeviceSessionController.reconnectBaseDelay =
+          const Duration(milliseconds: 500);
+    });
     final notifier = container.read(deviceSessionProvider.notifier);
     await notifier.connect('dev-1');
     device.emitDisconnected();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(container.read(connectionPhaseProvider), ConnectionPhase.disconnected);
+    device.rejectConnect = true; // 拒绝重连 → 稳定 disconnected
+    await waitFor(() =>
+        container.read(connectionPhaseProvider) == ConnectionPhase.disconnected,
+        timeout: const Duration(seconds: 2));
 
     notifier.setPhase(ConnectionPhase.loadingUi);
     expect(container.read(connectionPhaseProvider), ConnectionPhase.disconnected);

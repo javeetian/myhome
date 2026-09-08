@@ -38,8 +38,6 @@ class DeviceClient {
     AppLog? log,
   })  : _deviceId = deviceId,
         _codec = codec,
-        stats = stats ?? DeviceStats(),
-        log = log ?? AppLog.instance,
         _channel = ReliableChannel(
           transport: transport,
           fragmenter: Fragmenter(mtu: mtu),
@@ -58,11 +56,11 @@ class DeviceClient {
   final MessageCodec _codec;
   final ReliableChannel _channel;
 
-  /// 通信统计 (Phase 12 §28/§33)。
-  final DeviceStats stats;
+  /// 通信统计 (Phase 12 §28/§33；与通道共享同一实例)。
+  DeviceStats get stats => _channel.stats;
 
   /// 日志 (Phase 12 §31)。
-  final AppLog log;
+  AppLog get log => _channel.log;
 
   /// 设备标识 (UI Adapter 的 /api/device 使用)。
   String get deviceId => _deviceId;
@@ -471,7 +469,13 @@ class DeviceClient {
   /// 发送命令并等待业务响应 (§11.1)。
   ///
   /// 业务错误 (status='error') 作为正常返回值；传输失败 / 响应超时抛异常。
-  Future<DeviceResponse> command(String cmd, Map<String, dynamic> params) async {
+  /// [replaceKey] (WORK_V3 §39)：同键命令排队时旧命令被替换
+  /// (亮度滑块快速拖动场景)，被替换的命令抛 StateError。
+  Future<DeviceResponse> command(
+    String cmd,
+    Map<String, dynamic> params, {
+    String? replaceKey,
+  }) async {
     if (!_connected) {
       throw StateError('未连接');
     }
@@ -482,6 +486,7 @@ class DeviceClient {
     try {
       await _channel.send(
         _codec.encode(DeviceCommand(requestId: requestId, cmd: cmd, params: params)),
+        replaceKey: replaceKey,
       );
     } catch (_) {
       _pending.remove(requestId);

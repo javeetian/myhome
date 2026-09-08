@@ -6,6 +6,7 @@ import '../core/app_log.dart';
 import '../device/device_client.dart';
 import '../device/protocol_device.dart';
 import '../protocol/protocol_messages.dart';
+import '../simulator/fault_injector.dart';
 import '../ui_runtime/ui_cache.dart';
 import '../ui_runtime/ui_server.dart';
 
@@ -19,12 +20,16 @@ class StudioState {
     this.currentState,
     this.helloAck,
     this.error,
+    this.faultInjector,
     this.protocolLog = const <String>[],
   });
 
   final ProtocolDevice? device;
   final DeviceClient? client;
   final UiServer? uiServer;
+
+  /// 故障注入器 (Phase 21 面板操控)。
+  final FaultInjector? faultInjector;
 
   /// UI 预览入口 (随机端口 + token)。
   final String? entryUrl;
@@ -54,6 +59,7 @@ class StudioState {
         currentState: currentState ?? this.currentState,
         helloAck: helloAck,
         error: error,
+        faultInjector: faultInjector,
         protocolLog: protocolLog ?? this.protocolLog,
       );
 }
@@ -87,9 +93,14 @@ class StudioController extends Notifier<StudioState> {
   Future<bool> start(ProtocolDevice device) async {
     await stop();
     final log = AppLog(level: LogLevel.trace, output: _appendLog);
+    // 故障注入包装 (Phase 21)：Studio 面板操控
+    final injector = FaultInjector(device);
+    injector.onDisconnectRequested = () {
+      _appendLog('WARN 故障注入：写入时断开');
+    };
     try {
       final client = DeviceClient(
-        transport: device,
+        transport: injector,
         deviceId: device.deviceId,
         log: log,
       );
@@ -125,6 +136,7 @@ class StudioController extends Notifier<StudioState> {
         entryUrl: uiServer.entryUrl,
         currentState: client.currentState,
         helloAck: ack,
+        faultInjector: injector,
         protocolLog: List<String>.unmodifiable(_logLines),
       );
       return true;

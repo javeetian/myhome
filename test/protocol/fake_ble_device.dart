@@ -86,8 +86,11 @@ class FakeBleDevice implements BleTransport {
   /// 最近一次推送过的状态 (STATE_REQUEST 默认回复)。
   DeviceState? _lastState;
 
-  /// 模拟设备侧断开 (广播 disconnected)。
-  void emitDisconnected() => _connectionStates.add(BleConnectionState.disconnected);
+  /// 模拟设备侧断开 (广播 disconnected)：协议栈复位 (§21 新会话不继承旧状态)。
+  void emitDisconnected() {
+    _assembler.reset();
+    _connectionStates.add(BleConnectionState.disconnected);
+  }
 
   @override
   Stream<BleConnectionState> get connectionStates => _connectionStates.stream;
@@ -102,6 +105,14 @@ class FakeBleDevice implements BleTransport {
   FakeBleDevice() {
     _decoder.onFrame = _onFrame;
     _assembler.onComplete = _onMessageAssembled;
+    // 重复帧 (发送端重发) → 重发 ACK (§7.4 去重语义)；dropMessages 同样抑制
+    _assembler.onDuplicate = (msgId) {
+      if (dropMessages > 0) {
+        dropMessages--;
+        return;
+      }
+      sendAck(msgId);
+    };
   }
 
   void _onFrame(BleFrame frame) {
@@ -284,6 +295,8 @@ class FakeBleDevice implements BleTransport {
   @override
   Future<void> disconnect() async {
     connected = false;
+    // 会话重置：新会话的 MSG_ID 不得被旧会话完成记录误判为重复 (§21)
+    _assembler.reset();
   }
 
   @override

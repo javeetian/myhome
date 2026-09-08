@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -24,6 +26,7 @@ class DevicePage extends ConsumerStatefulWidget {
 
 class _DevicePageState extends ConsumerState<DevicePage> {
   bool _leaving = false;
+  bool _wasReconnecting = false;
 
   Future<void> _disconnect() async {
     _leaving = true;
@@ -39,9 +42,32 @@ class _DevicePageState extends ConsumerState<DevicePage> {
     ref.read(deviceSessionProvider.notifier).setPhase(ConnectionPhase.connected);
   }
 
-  /// 设备断开/异常 → 提示并自动返回 (§20)。
+  /// 重连成功后重启 UI Server (新 client) 并重载 WebView (Phase 22)。
+  Future<void> _restartUiServer() async {
+    final client = ref.read(deviceClientProvider);
+    if (client == null) {
+      return;
+    }
+    // 内部走 UiRuntime：UI 缓存命中，秒级恢复
+    await ref.read(uiServerControllerProvider.notifier).start(client);
+  }
+
+  /// 设备断开/异常/重连 → 状态机处理 (§20, Phase 22)。
   void _onPhaseChanged(ConnectionPhase phase) {
     if (_leaving) {
+      return;
+    }
+    if (phase == ConnectionPhase.reconnecting) {
+      _wasReconnecting = true;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('连接中断，正在重连…')));
+      return;
+    }
+    if (phase == ConnectionPhase.connected && _wasReconnecting) {
+      _wasReconnecting = false;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('已重新连接')));
+      unawaited(_restartUiServer());
       return;
     }
     if (phase != ConnectionPhase.disconnected &&
@@ -85,7 +111,11 @@ class _DevicePageState extends ConsumerState<DevicePage> {
       ),
       body: entryUrl == null
           ? const Center(child: Text('UI 服务未启动'))
-          : WebViewHost(url: entryUrl, onPageLoaded: _onUiLoaded),
+          : WebViewHost(
+              key: ValueKey<String>(entryUrl), // 重连后 entryUrl 变化 → 重建重载
+              url: entryUrl,
+              onPageLoaded: _onUiLoaded,
+            ),
     );
   }
 }
