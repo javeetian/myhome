@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'webview_host_stub.dart' as impl
-    if (dart.library.io) 'webview_host_io.dart';
+import 'webview_host_stub.dart'
+    if (dart.library.io) 'webview_host_io.dart' show buildHost;
 
 /// WebView 宿主 (WORK_V3 桌面版扩展)：
 /// Windows → webview_windows (Edge WebView2)；
@@ -18,6 +18,6 @@ class WebViewHost extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return impl.buildHost(url: url, onPageLoaded: onPageLoaded);
+    return buildHost(url: url, onPageLoaded: onPageLoaded);
   }
 }
