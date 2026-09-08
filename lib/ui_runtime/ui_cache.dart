@@ -7,10 +7,13 @@ import 'package:path_provider/path_provider.dart';
 
 import 'ui_package.dart';
 
-/// UI Package 缓存 (WORK_V2 §15.4/§27)。
+/// UI Package 缓存 (WORK_V2 §15.4 / WORK_V3 §35)。
 ///
-/// 目录布局：`ui/<deviceId>/<uiVersion>/` → 解包后的 UI 文件。
-/// 缓存键 = Device ID + UI Version (§15.4)。
+/// 目录布局 (V3 §35 缓存 Key = device type + model + version + hash)：
+/// ```text
+/// ui/<deviceType>/<deviceModel>/<uiVersion>/
+/// ```
+/// 同型号设备共享缓存；hash 在 store 时校验 (§15.5)，版本变化自然隔离。
 class UiCache {
   UiCache(this.rootDir);
 
@@ -27,13 +30,13 @@ class UiCache {
   }
 
   /// 版本目录路径。
-  String versionDir(String deviceId, String uiVersion) =>
-      p.join(rootDir, deviceId, uiVersion);
+  String versionDir(String deviceType, String deviceModel, String uiVersion) =>
+      p.join(rootDir, deviceType, deviceModel, uiVersion);
 
-  /// 缓存命中检查 (§15.3)：版本目录存在且含 index.html。
+  /// 缓存命中检查 (§15.3/§35)：版本目录存在且含 index.html。
   /// 命中返回静态根目录，否则 null。
-  String? lookup(String deviceId, String uiVersion) {
-    final dir = Directory(versionDir(deviceId, uiVersion));
+  String? lookup(String deviceType, String deviceModel, String uiVersion) {
+    final dir = Directory(versionDir(deviceType, deviceModel, uiVersion));
     if (!File(p.join(dir.path, 'index.html')).existsSync()) {
       return null;
     }
@@ -41,9 +44,10 @@ class UiCache {
   }
 
   /// 校验并解包 ui.pkg → 写入版本目录 (§15.5)。
-  /// 完整性校验失败抛异常，不污染缓存。
+  /// 完整性校验失败抛异常；损坏的旧缓存会被清除 (Corrupted → Reinstall, §35)。
   Future<String> store(
-    String deviceId,
+    String deviceType,
+    String deviceModel,
     String uiVersion,
     Uint8List pkgBytes, {
     int? expectedSize,
@@ -63,9 +67,9 @@ class UiCache {
     if (!files.containsKey('index.html')) {
       throw StateError('UI 包缺少 index.html');
     }
-    final target = Directory(versionDir(deviceId, uiVersion));
+    final target = Directory(versionDir(deviceType, deviceModel, uiVersion));
     if (target.existsSync()) {
-      target.deleteSync(recursive: true);
+      target.deleteSync(recursive: true); // 重装 (Corrupted → Reinstall)
     }
     target.createSync(recursive: true);
     for (final entry in files.entries) {

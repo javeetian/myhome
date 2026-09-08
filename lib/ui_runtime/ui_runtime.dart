@@ -35,8 +35,12 @@ class UiRuntime {
     // 1. 读取 manifest (§15.1/§26)
     final manifest = await _readManifest();
     manifest.checkProtocolSupported(); // §24
-    // 2. 缓存命中 (§15.3)
-    final cached = _cache.lookup(_client.deviceId, manifest.uiVersion);
+    // 2. 缓存命中 (§15.3/§35：Key = type + model + version)
+    final cached = _cache.lookup(
+      manifest.deviceType,
+      manifest.deviceModel,
+      manifest.uiVersion,
+    );
     if (cached != null) {
       return UiLoadResult(rootDir: cached, manifest: manifest);
     }
@@ -44,7 +48,8 @@ class UiRuntime {
     final pkg = await _download('ui.pkg');
     // 4. 完整性校验 + 解包 + 缓存 (§15.5)
     final root = await _cache.store(
-      _client.deviceId,
+      manifest.deviceType,
+      manifest.deviceModel,
       manifest.uiVersion,
       pkg,
       expectedSize: manifest.packageSize,

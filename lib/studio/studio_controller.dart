@@ -1,13 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 
 import '../core/app_log.dart';
 import '../device/device_client.dart';
+import '../device/device_manifest.dart';
 import '../device/protocol_device.dart';
 import '../protocol/protocol_messages.dart';
 import '../simulator/fault_injector.dart';
 import '../ui_runtime/ui_cache.dart';
+import '../ui_runtime/ui_package.dart';
 import '../ui_runtime/ui_server.dart';
 
 /// Device Studio 会话状态 (WORK_V3 §22/§28)。
@@ -21,6 +27,7 @@ class StudioState {
     this.helloAck,
     this.error,
     this.faultInjector,
+    this.reloadCount = 0,
     this.protocolLog = const <String>[],
   });
 
@@ -30,6 +37,9 @@ class StudioState {
 
   /// 故障注入器 (Phase 21 面板操控)。
   final FaultInjector? faultInjector;
+
+  /// UI Hot Reload 计数 (Phase 37)：变化时 WebView 重载。
+  final int reloadCount;
 
   /// UI 预览入口 (随机端口 + token)。
   final String? entryUrl;
@@ -50,6 +60,7 @@ class StudioState {
   StudioState copyWith({
     DeviceState? currentState,
     List<String>? protocolLog,
+    int? reloadCount,
   }) =>
       StudioState(
         device: device,
@@ -60,6 +71,7 @@ class StudioState {
         helloAck: helloAck,
         error: error,
         faultInjector: faultInjector,
+        reloadCount: reloadCount ?? this.reloadCount,
         protocolLog: protocolLog ?? this.protocolLog,
       );
 }
@@ -82,6 +94,12 @@ class StudioController extends Notifier<StudioState> {
   // 资源引用私有缓存：onDispose 期间不能访问 state/ref
   DeviceClient? _client;
   UiServer? _uiServer;
+
+  // UI Hot Reload (Phase 37)
+  StreamSubscription<FileSystemEvent>? _uiWatchSub;
+  Timer? _uiDebounce;
+  String? _uiWatchDir;
+  String? _uiWatchOut;
 
   @override
   StudioState build() {
@@ -109,13 +127,12 @@ class StudioController extends Notifier<StudioState> {
       await client.syncState();
       client.startHeartbeat();
 
-      // UI 包 (设备提供) → 解压缓存 → 静态根 (§15.3)
+      // UI 包 (设备提供) → 解压缓存 → 静态根 (§15.3/§35)
       String? staticRoot;
       final pkgBytes = device.resourceBytes('ui.pkg');
       if (pkgBytes != null) {
         final cache = _cache ?? await UiCache.open();
-        staticRoot =
-            await cache.store(device.deviceId, device.uiVersion, pkgBytes);
+        staticRoot = await _storeUiPackage(cache, device, pkgBytes);
       }
       final uiServer = UiServer(client: client, staticRoot: staticRoot);
       await uiServer.start();
@@ -150,8 +167,98 @@ class StudioController extends Notifier<StudioState> {
     }
   }
 
+  /// UI 包 → 缓存 (V3 §35 缓存 Key = type + model + version)。
+  Future<String> _storeUiPackage(
+    UiCache cache,
+    ProtocolDevice device,
+    Uint8List pkgBytes,
+  ) async {
+    var deviceType = device.deviceId;
+    var deviceModel = 'default';
+    final manifestBytes = device.resourceBytes('manifest.json');
+    if (manifestBytes != null) {
+      try {
+        final manifest = DeviceManifest.fromJson(
+          jsonDecode(utf8.decode(manifestBytes)) as Map<String, dynamic>,
+        );
+        deviceType = manifest.deviceType;
+        deviceModel = manifest.deviceModel;
+      } catch (_) {
+        // 坏 manifest：回退 deviceId
+      }
+    }
+    return cache.store(deviceType, deviceModel, device.uiVersion, pkgBytes);
+  }
+
+  /// UI Hot Reload (Phase 37)：监听 UI 源目录 → 自动重打包 → 重载 WebView。
+  void startUiWatch(String sourceDir, String outPkg) {
+    stopUiWatch();
+    _uiWatchDir = sourceDir;
+    _uiWatchOut = outPkg;
+    try {
+      _uiWatchSub = Directory(sourceDir).watch(recursive: true).listen((_) {
+        _uiDebounce?.cancel();
+        _uiDebounce = Timer(const Duration(milliseconds: 300), () {
+          unawaited(rebuildUi());
+        });
+      });
+      _appendLog('INFO UI watch: $sourceDir');
+    } catch (e) {
+      _appendLog('ERROR UI watch 失败: $e');
+    }
+  }
+
+  void stopUiWatch() {
+    _uiDebounce?.cancel();
+    _uiDebounce = null;
+    _uiWatchSub?.cancel();
+    _uiWatchSub = null;
+    _uiWatchDir = null;
+    _uiWatchOut = null;
+  }
+
+  /// 重新打包 UI → 覆盖缓存 → 通知 WebView 重载 (reloadCount++)。
+  Future<void> rebuildUi() async {
+    final dir = _uiWatchDir;
+    final out = _uiWatchOut;
+    final device = state.device;
+    final client = state.client;
+    if (dir == null || out == null || device == null || client == null) {
+      return;
+    }
+    try {
+      final files = <String, Uint8List>{};
+      for (final entity in Directory(dir).listSync(recursive: true)) {
+        if (entity is! File) {
+          continue;
+        }
+        final rel =
+            p.relative(entity.path, from: dir).replaceAll('\\', '/');
+        files[rel] = Uint8List.fromList(entity.readAsBytesSync());
+      }
+      if (!files.containsKey('manifest.json')) {
+        _appendLog('ERROR UI 目录缺少 manifest.json');
+        return;
+      }
+      final pkg = UiPackage.pack(files);
+      File(out)
+        ..parent.createSync(recursive: true)
+        ..writeAsBytesSync(pkg);
+      // 覆盖缓存 (同版本目录, Corrupted → Reinstall 语义)
+      final cache = _cache ?? await UiCache.open();
+      await _storeUiPackage(cache, device, pkg);
+      _appendLog('INFO UI 已重打包 (${files.length} 文件) → 重载 WebView');
+      if (ref.mounted) {
+        state = state.copyWith(reloadCount: state.reloadCount + 1);
+      }
+    } catch (e) {
+      _appendLog('ERROR UI 重打包失败: $e');
+    }
+  }
+
   /// 断开并释放会话。
   Future<void> stop() async {
+    stopUiWatch();
     await _disposeResources();
     if (ref.mounted) {
       state = const StudioState(protocolLog: <String>[]);

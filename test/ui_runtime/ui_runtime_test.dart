@@ -86,7 +86,7 @@ void main() {
     expect(result.manifest.uiVersion, '1.2.3');
     expect(result.manifest.deviceType, 'light');
     expect(result.manifest.capabilities, <String>['power', 'brightness']);
-    expect(result.rootDir, cache.versionDir('dev-1', '1.2.3'));
+    expect(result.rootDir, cache.versionDir('light', 'fake-1', '1.2.3'));
     expect(File(p.join(result.rootDir, 'index.html')).existsSync(), isTrue);
     expect(File(p.join(result.rootDir, 'assets/icon.svg')).existsSync(), isTrue);
   });
@@ -130,7 +130,7 @@ void main() {
       },
     });
     await expectLater(runtime.loadUi(), throwsA(isA<StateError>()));
-    expect(cache.lookup('dev-1', '1.2.3'), isNull);
+    expect(cache.lookup('light', 'fake-1', '1.2.3'), isNull);
   });
 
   test('SHA256 正确 → 通过', () async {
@@ -141,7 +141,7 @@ void main() {
       },
     });
     final result = await runtime.loadUi();
-    expect(result.rootDir, cache.versionDir('dev-1', '1.2.3'));
+    expect(result.rootDir, cache.versionDir('light', 'fake-1', '1.2.3'));
   });
 
   test('协议版本不支持 → UnsupportedProtocolError (§24)', () async {

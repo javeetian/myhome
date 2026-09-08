@@ -79,9 +79,16 @@ class _DeviceListPanel extends ConsumerWidget {
               final pkg = pkgFile.existsSync()
                   ? pkgFile.readAsBytesSync()
                   : null;
-              await ref
+              final ok = await ref
                   .read(studioControllerProvider.notifier)
                   .start(VirtualLight(uiPkgBytes: pkg));
+              if (ok) {
+                // UI Hot Reload (Phase 37)：源目录变化 → 自动重打包重载
+                ref.read(studioControllerProvider.notifier).startUiWatch(
+                      'devices/smart_light/ui',
+                      'devices/smart_light/build/ui.pkg',
+                    );
+              }
             },
           ),
           _deviceCard(
@@ -135,7 +142,12 @@ class _CenterPanel extends ConsumerWidget {
       children: <Widget>[
         Expanded(
           child: studio.entryUrl != null
-              ? WebViewHost(url: studio.entryUrl!)
+              ? WebViewHost(
+                  // reloadCount 变化 → 重建重载 (UI Hot Reload, Phase 37)
+                  key: ValueKey<String>(
+                      '${studio.entryUrl}#${studio.reloadCount}'),
+                  url: studio.entryUrl!,
+                )
               : Center(
                   child: Text(
                     studio.error != null

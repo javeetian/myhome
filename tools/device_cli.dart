@@ -77,7 +77,7 @@ Future<int> _validateDefinition(List<String> args) async {
   }
 }
 
-/// Phase 13/14：ui build / ui validate。
+/// Phase 13/14/37：ui build / ui validate / ui watch。
 Future<int> _uiCommand(List<String> args) async {
   if (args.isEmpty) {
     _usage();
@@ -88,10 +88,86 @@ Future<int> _uiCommand(List<String> args) async {
       return _uiBuild(args.sublist(1));
     case 'validate':
       return _uiValidate(args.sublist(1));
+    case 'watch':
+      return _uiWatch(args.sublist(1));
     default:
       _usage();
       return 2;
   }
+}
+
+/// Phase 37：监听 UI 源目录 → 自动重打包 (配合 Studio 自动重载)。
+Future<int> _uiWatch(List<String> args) async {
+  if (args.isEmpty) {
+    stderr.writeln('用法: device ui watch <ui目录> [输出.ui.pkg]');
+    return 2;
+  }
+  final sourceDir = args[0];
+  final outPath = args.length > 1
+      ? args[1]
+      : p.join(p.dirname(sourceDir), 'build', 'ui.pkg');
+  if (!Directory(sourceDir).existsSync()) {
+    stderr.writeln('ERROR: UI 目录不存在: $sourceDir');
+    return 1;
+  }
+  stdout.writeln('WATCH: $sourceDir → $outPath (Ctrl+C 退出)');
+  var exitCode = await _uiBuildOnce(sourceDir, outPath);
+  if (exitCode != 0) {
+    return exitCode;
+  }
+  await for (final event in Directory(sourceDir).watch(recursive: true)) {
+    final name = p.basename(event.path);
+    if (name.startsWith('.')) {
+      continue; // 编辑器临时文件
+    }
+    stdout.writeln(
+      '${DateTime.now().toIso8601String()} changed: $name → 重新打包',
+    );
+    exitCode = await _uiBuildOnce(sourceDir, outPath);
+    if (exitCode != 0) {
+      stderr.writeln('WARN: 打包失败，继续监听…');
+    }
+  }
+  return 0;
+}
+
+/// 构建一次：目录 → ui.pkg。返回退出码。
+Future<int> _uiBuildOnce(String sourceDir, String outPath) async {
+  final files = <String, Uint8List>{};
+  for (final entity in Directory(sourceDir).listSync(recursive: true)) {
+    if (entity is! File) {
+      continue;
+    }
+    final rel =
+        p.relative(entity.path, from: sourceDir).replaceAll('\\', '/');
+    files[rel] = Uint8List.fromList(entity.readAsBytesSync());
+  }
+  if (!files.containsKey('manifest.json')) {
+    stderr.writeln('ERROR: UI 目录缺少 manifest.json');
+    return 1;
+  }
+  final DeviceManifest manifest;
+  try {
+    manifest = DeviceManifest.fromJson(
+      jsonDecode(utf8.decode(files['manifest.json']!)) as Map<String, dynamic>,
+    );
+  } catch (e) {
+    stderr.writeln('ERROR: Invalid manifest: $e');
+    return 1;
+  }
+  if (!files.containsKey(manifest.entry)) {
+    stderr.writeln('ERROR: UI package entry not found: ${manifest.entry}');
+    return 1;
+  }
+  final pkg = UiPackage.pack(files);
+  final outFile = File(outPath);
+  outFile.parent.createSync(recursive: true);
+  outFile.writeAsBytesSync(pkg);
+  stdout.writeln(
+    'PASS: ui.pkg ($outPath) ${pkg.length} bytes, ${files.length} files, '
+    'version=${manifest.uiVersion}, sha256=${sha256.convert(pkg).toString().substring(0, 16)}...',
+  );
+  return 0;
 }
 
 /// Phase 25：device.yaml → 多端代码生成。
@@ -137,54 +213,15 @@ Future<int> _uiBuild(List<String> args) async {
     stderr.writeln('用法: device ui build <ui目录> [输出.ui.pkg]');
     return 2;
   }
-  final sourceDir = Directory(args[0]);
-  if (!sourceDir.existsSync()) {
-    stderr.writeln('ERROR: UI 目录不存在: ${args[0]}');
+  final sourceDir = args[0];
+  if (!Directory(sourceDir).existsSync()) {
+    stderr.writeln('ERROR: UI 目录不存在: $sourceDir');
     return 1;
   }
-  // 收集目录下全部文件 (相对路径 → 内容)
-  final files = <String, Uint8List>{};
-  for (final entity in sourceDir.listSync(recursive: true)) {
-    if (entity is! File) {
-      continue;
-    }
-    final rel = p
-        .relative(entity.path, from: sourceDir.path)
-        .replaceAll('\\', '/');
-    files[rel] = Uint8List.fromList(entity.readAsBytesSync());
-  }
-  if (!files.containsKey('manifest.json')) {
-    stderr.writeln('ERROR: UI 目录缺少 manifest.json');
-    return 1;
-  }
-
-  // 校验源 manifest (构建前检查)
-  final manifest = DeviceManifest.fromJson(
-    jsonDecode(utf8.decode(files['manifest.json']!)) as Map<String, dynamic>,
-  );
-  if (!files.containsKey(manifest.entry)) {
-    stderr.writeln('ERROR: UI package entry not found: ${manifest.entry}');
-    return 1;
-  }
-
-  // 打包
-  final pkg = UiPackage.pack(files);
-
-  // 输出 (默认 <ui目录>/../build/ui.pkg)
   final outPath = args.length > 1
       ? args[1]
-      : p.join(sourceDir.parent.path, 'build', 'ui.pkg');
-  final outFile = File(outPath);
-  outFile.parent.createSync(recursive: true);
-  outFile.writeAsBytesSync(pkg);
-
-  stdout.writeln(
-    'PASS: ui.pkg ($outPath) '
-    '${pkg.length} bytes, ${files.length} files, '
-    'version=${manifest.uiVersion}, entry=${manifest.entry}, '
-    'sha256=${sha256.convert(pkg).toString().substring(0, 16)}...',
-  );
-  return 0;
+      : p.join(p.dirname(sourceDir), 'build', 'ui.pkg');
+  return _uiBuildOnce(sourceDir, outPath);
 }
 
 /// Phase 14：ui.pkg 校验。
