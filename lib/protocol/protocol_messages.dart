@@ -191,3 +191,14 @@ class DeviceResourceResponse extends ProtocolMessage {
   @override
   int get frameType => FrameType.resourceResponse;
 }
+
+/// 全量状态请求 (App → 设备, §16.5/§16.6 STATE_REQUEST)。
+/// 用于：首次同步、Version Gap 补全、重连、App 恢复。
+class DeviceStateRequest extends ProtocolMessage {
+  const DeviceStateRequest({required this.requestId});
+
+  final int requestId;
+
+  @override
+  int get frameType => FrameType.stateRequest;
+}

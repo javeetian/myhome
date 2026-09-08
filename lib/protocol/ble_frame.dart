@@ -34,6 +34,10 @@ class FrameType {
   static const int resourceRequest = 0x30;
   static const int resourceResponse = 0x31;
 
+  /// 全量状态请求 (WORK_V2 §16.5/§16.6 STATE_REQUEST)。
+  /// §10.1 注册表扩展，固件侧需对齐。
+  static const int stateRequest = 0x32;
+
   static const Set<int> valid = <int>{
     command,
     response,
@@ -48,6 +52,7 @@ class FrameType {
     pong,
     resourceRequest,
     resourceResponse,
+    stateRequest,
   };
 
   static bool isValid(int type) => valid.contains(type);

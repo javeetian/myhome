@@ -100,6 +100,16 @@ class DemoDevice implements BleTransport {
         } on ProtocolException {
           // 坏资源请求：忽略
         }
+      case FrameType.stateRequest:
+        try {
+          // 全量状态请求 (§16.5/§16.6)：回复当前状态快照 (不递增版本)
+          _sendMessage(
+            FrameType.state,
+            _codec.encode(DeviceState(version: _stateVersion, state: _state)),
+          );
+        } on ProtocolException {
+          // 坏状态请求：忽略
+        }
       default:
         break;
     }

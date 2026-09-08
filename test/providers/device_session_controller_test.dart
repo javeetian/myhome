@@ -29,6 +29,20 @@ void main() {
     return device.dispose();
   });
 
+  /// 轮询等待条件成立 (Riverpod 3 微任务批处理下观察中间态)。
+  Future<void> waitFor(
+    bool Function() condition, {
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (!condition()) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('等待条件超时');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+  }
+
   test('初始状态 disconnected，无 client (§12.6)', () {
     final session = container.read(deviceSessionProvider);
 
@@ -145,6 +159,31 @@ void main() {
 
     expect(container.read(connectionPhaseProvider), ConnectionPhase.error);
   }, timeout: const Timeout(Duration(seconds: 15)));
+
+  test('connect 中间态: handshaking → syncingState (§12.6, Phase 11)', () async {
+    device.helloDelay = const Duration(milliseconds: 100);
+    device.pushInitialStateOnConnect = false;
+    device.stateRequestDelay = const Duration(milliseconds: 100);
+    final notifier = container.read(deviceSessionProvider.notifier);
+
+    final connectFuture = notifier.connect('dev-1');
+    await waitFor(() =>
+        container.read(connectionPhaseProvider) == ConnectionPhase.handshaking);
+    await waitFor(() =>
+        container.read(connectionPhaseProvider) == ConnectionPhase.syncingState);
+    await connectFuture;
+
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.connected);
+    expect(container.read(deviceStateProvider), isNotNull);
+  });
+
+  test('connect 完成状态同步 (§16.6)', () async {
+    final notifier = container.read(deviceSessionProvider.notifier);
+    await notifier.connect('dev-1');
+
+    expect(container.read(deviceStateProvider)?.version, 1);
+    expect(container.read(deviceClientProvider)!.hasState, isTrue);
+  });
 
   test('setPhase: loadingUi → connected (Phase 9 UI 加载)', () async {
     final notifier = container.read(deviceSessionProvider.notifier);

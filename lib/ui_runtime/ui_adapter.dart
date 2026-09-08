@@ -57,7 +57,7 @@ class UiAdapter {
     }
   }
 
-  /// GET /api/state：当前设备状态 (Phase 11 §16.6 起支持主动拉取)。
+  /// GET /api/state：当前设备状态 (§16.6 未同步时主动拉取)。
   Future<Response> handleState(Request request) async {
     try {
       final state = await _client.getState();
@@ -65,8 +65,8 @@ class UiAdapter {
         'version': state.version,
         'state': state.state,
       });
-    } on StateError catch (e) {
-      return _errorResponse(404, 2002, '$e');
+    } catch (e) {
+      return _errorResponse(404, 2002, '状态不可用: $e');
     }
   }
 

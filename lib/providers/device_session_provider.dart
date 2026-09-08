@@ -53,11 +53,18 @@ class DeviceSessionController extends Notifier<DeviceSession> {
 
     try {
       await client.connect();
-      // HELLO 握手 (WORK_V2 §15.3/§39)：handshaking → connected
+      // HELLO 握手 (WORK_V2 §15.3/§39)：handshaking
       state = state.copyWith(phase: ConnectionPhase.handshaking);
       await client.hello();
+      // 状态同步 (WORK_V2 §16.6)：设备是唯一数据源
+      state = state.copyWith(phase: ConnectionPhase.syncingState);
+      await client.syncState();
       _wireSession(client, resolved);
-      state = state.copyWith(phase: ConnectionPhase.connected, clearError: true);
+      state = state.copyWith(
+        phase: ConnectionPhase.connected,
+        deviceState: client.currentState,
+        clearError: true,
+      );
     } catch (e) {
       _unwire();
       state = state.copyWith(phase: ConnectionPhase.error, error: '$e');

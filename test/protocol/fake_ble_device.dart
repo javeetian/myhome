@@ -40,8 +40,27 @@ class FakeBleDevice implements BleTransport {
   /// 资源处理器 (Phase 10 §27)。null = 默认回 5001 资源不存在。
   DeviceResourceResponse? Function(DeviceResourceRequest request)? onResource;
 
+  /// STATE_REQUEST 处理器 (Phase 11 §16.5)。null = 默认回最近一次
+  /// 推送过的状态 (无则 v1 空状态)。
+  DeviceState? Function(DeviceStateRequest request)? onStateRequest;
+
   /// 是否自动回复命令 (false 时完全不回复，模拟响应丢失)。
   bool autoRespond = true;
+
+  /// 连接后是否自动推送初始状态 (Phase 11 §16.6 首次同步)。
+  bool pushInitialStateOnConnect = true;
+
+  /// HELLO 响应延迟 (测试 handshaking 中间态)。
+  Duration helloDelay = Duration.zero;
+
+  /// 初始状态推送延迟 (测试 syncingState 中间态)。
+  Duration initialStateDelay = Duration.zero;
+
+  /// STATE_REQUEST 响应延迟 (测试 syncingState 中间态)。
+  Duration stateRequestDelay = Duration.zero;
+
+  /// 收到的全部 STATE_REQUEST。
+  final List<DeviceStateRequest> receivedStateRequests = <DeviceStateRequest>[];
 
   /// 手机写入的全部字节 (按 write 调用分块)。
   final List<List<int>> writtenChunks = <List<int>>[];
@@ -54,6 +73,9 @@ class FakeBleDevice implements BleTransport {
 
   final StreamController<BleConnectionState> _connectionStates =
       StreamController<BleConnectionState>.broadcast();
+
+  /// 最近一次推送过的状态 (STATE_REQUEST 默认回复)。
+  DeviceState? _lastState;
 
   /// 模拟设备侧断开 (广播 disconnected)。
   void emitDisconnected() => _connectionStates.add(BleConnectionState.disconnected);
@@ -115,7 +137,35 @@ class FakeBleDevice implements BleTransport {
                 )
               : handler(hello);
           if (ack != null) {
-            sendMessage(FrameType.helloAck, _codec.encode(ack));
+            void reply() => sendMessage(FrameType.helloAck, _codec.encode(ack));
+            if (helloDelay == Duration.zero) {
+              reply();
+            } else {
+              Future<void>.delayed(helloDelay, () {
+                if (!_notifications.isClosed) {
+                  reply();
+                }
+              });
+            }
+          }
+        case FrameType.stateRequest:
+          final request = _codec.decode(frameType, message) as DeviceStateRequest;
+          receivedStateRequests.add(request);
+          final handler = onStateRequest;
+          final state = handler == null
+              ? (_lastState ?? const DeviceState(version: 1, state: <String, dynamic>{}))
+              : handler(request);
+          if (state != null) {
+            void reply() => sendState(state.version, state.state);
+            if (stateRequestDelay == Duration.zero) {
+              reply();
+            } else {
+              Future<void>.delayed(stateRequestDelay, () {
+                if (!_notifications.isClosed) {
+                  reply();
+                }
+              });
+            }
           }
         case FrameType.resourceRequest:
           final request = _codec.decode(frameType, message) as DeviceResourceRequest;
@@ -163,8 +213,10 @@ class FakeBleDevice implements BleTransport {
   void sendEvent(String event, Map<String, dynamic> data) =>
       sendMessage(FrameType.event, _codec.encode(DeviceEvent(event: event, data: data)));
 
-  void sendState(int version, Map<String, dynamic> state) =>
-      sendMessage(FrameType.state, _codec.encode(DeviceState(version: version, state: state)));
+  void sendState(int version, Map<String, dynamic> state) {
+    _lastState = DeviceState(version: version, state: state);
+    sendMessage(FrameType.state, _codec.encode(_lastState!));
+  }
 
   void sendPatch(int version, List<Map<String, dynamic>> ops) =>
       sendMessage(FrameType.patch, _codec.encode(DevicePatch(version: version, ops: ops)));
@@ -192,6 +244,14 @@ class FakeBleDevice implements BleTransport {
       throw StateError('连接被拒绝');
     }
     connected = true;
+    if (pushInitialStateOnConnect) {
+      Future<void>.delayed(initialStateDelay, () {
+        // 已推送过脚本化状态时不覆盖 (模拟真实设备行为)
+        if (!_notifications.isClosed && connected && _lastState == null) {
+          sendState(1, const <String, dynamic>{});
+        }
+      });
+    }
   }
 
   @override

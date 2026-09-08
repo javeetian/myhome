@@ -103,6 +103,7 @@ void main() {
       expect(result['contentType'], 'application/javascript');
       expect(result['body'], contains('window.deviceApi'));
       expect(result['body'], contains('window.deviceState'));
+      expect(result['body'], contains('deviceStateVersion'));
       expect(result['body'], contains('onState'));
       expect(result['body'], contains('onEvent'));
     });

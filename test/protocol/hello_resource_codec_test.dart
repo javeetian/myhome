@@ -109,4 +109,21 @@ void main() {
       );
     });
   });
+
+  group('STATE_REQUEST (§16.5/§16.6)', () {
+    test('DeviceStateRequest round-trip', () {
+      final decoded = codec.decode(
+        FrameType.stateRequest,
+        codec.encode(const DeviceStateRequest(requestId: 42)),
+      ) as DeviceStateRequest;
+      expect(decoded.requestId, 42);
+    });
+
+    test('缺 request_id → ProtocolException', () {
+      expect(
+        () => codec.decode(FrameType.stateRequest, utf8.encode('{}')),
+        throwsA(isA<ProtocolException>()),
+      );
+    });
+  });
 }

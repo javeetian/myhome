@@ -56,6 +56,9 @@ class JsonCodec implements MessageCodec {
           if (m.data != null) 'data': base64Encode(m.data!),
           if (m.error != null) 'error': m.error!.toJson(),
         },
+      DeviceStateRequest m => <String, dynamic>{
+          'request_id': m.requestId,
+        },
     };
     return utf8.encode(jsonEncode(json));
   }
@@ -108,6 +111,9 @@ class JsonCodec implements MessageCodec {
           status: _requireString(json, 'status'),
           data: json['data'] is String ? base64Decode(json['data'] as String) : null,
           error: _optionalError(json),
+        ),
+      FrameType.stateRequest => DeviceStateRequest(
+          requestId: _requireInt(json, 'request_id'),
         ),
       _ => throw ProtocolException(
           '非业务帧类型: 0x${frameType.toRadixString(16).padLeft(2, '0')}',

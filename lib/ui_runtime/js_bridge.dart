@@ -25,14 +25,15 @@ const String deviceApiRuntimeJs = r'''
   var eventListeners = {};
 
   // ---- 状态 (§14.5)：设备是唯一数据源 ----
-  function applyState(state) {
+  function applyState(state, version) {
     window.deviceState = state;
+    if (version !== undefined) { window.deviceStateVersion = version; }
     stateListeners.forEach(function (fn) { try { fn(state); } catch (e) { console.error(e); } });
     window.dispatchEvent(new CustomEvent('devicestate', { detail: state }));
   }
 
   // ---- Patch (JSON Patch 子集：replace / add / remove, §16.3) ----
-  function applyPatch(ops) {
+  function applyPatch(ops, version) {
     var state = window.deviceState;
     (ops || []).forEach(function (op) {
       if (!op || !op.path) { return; }
@@ -40,6 +41,7 @@ const String deviceApiRuntimeJs = r'''
       if (op.op === 'replace' || op.op === 'add') { setPath(state, parts, op.value); }
       else if (op.op === 'remove') { removePath(state, parts); }
     });
+    if (version !== undefined) { window.deviceStateVersion = version; }
     patchListeners.forEach(function (fn) { try { fn(ops); } catch (e) { console.error(e); } });
     window.dispatchEvent(new CustomEvent('devicepatch', { detail: ops }));
   }
@@ -62,8 +64,8 @@ const String deviceApiRuntimeJs = r'''
     (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + base + 'ws');
   ws.onmessage = function (e) {
     var m = JSON.parse(e.data);
-    if (m.type === 'state') { applyState(m.state); }
-    else if (m.type === 'patch') { applyPatch(m.ops); }
+    if (m.type === 'state') { applyState(m.state, m.version); }
+    else if (m.type === 'patch') { applyPatch(m.ops, m.version); }
     else if (m.type === 'event') {
       (eventListeners[m.event] || []).forEach(function (fn) {
         try { fn(m.data); } catch (err) { console.error(err); }
@@ -74,6 +76,7 @@ const String deviceApiRuntimeJs = r'''
 
   // ---- Device API (§14.3) ----
   window.deviceState = {};
+  window.deviceStateVersion = 0;
   window.deviceApi = {
     /** POST /api/command → Promise<{status, data, error, request_id}> */
     command: function (cmd, params) {

@@ -168,7 +168,8 @@ class ReliableChannel {
             FrameType.ping ||
             FrameType.pong ||
             FrameType.resourceRequest ||
-            FrameType.resourceResponse:
+            FrameType.resourceResponse ||
+            FrameType.stateRequest:
         _assembler.add(frame);
     }
   }

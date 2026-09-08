@@ -79,8 +79,21 @@ class DeviceClient {
 
   int _nextRequestId = 1;
   bool _connected = false;
-  DeviceState? _currentState;
+  int _stateVersion = 0;
+  Map<String, dynamic> _stateMap = <String, dynamic>{};
+  Completer<DeviceState>? _statePending;
   DeviceHelloAck? _helloAck;
+
+  /// 最近缓存的设备状态 (Phase 11 §16)；未同步过为 null。
+  DeviceState? get currentState => _stateVersion == 0
+      ? null
+      : DeviceState(
+          version: _stateVersion,
+          state: Map<String, dynamic>.unmodifiable(_stateMap),
+        );
+
+  /// 是否已收到过设备状态。
+  bool get hasState => _stateVersion > 0;
 
   /// 设备事件流 (§10.4)。
   Stream<DeviceEvent> get events => _events.stream;
@@ -105,13 +118,19 @@ class DeviceClient {
   }
 
   /// 断开并失败所有进行中的命令。
+  /// 状态存储同步清空 (§21：重连不能直接恢复旧状态，必须重新同步)。
   Future<void> disconnect() async {
     _connected = false;
+    _stateVersion = 0;
+    _stateMap = <String, dynamic>{};
     _failAllPending(StateError('设备已断开'));
     await _channel.transport.disconnect();
   }
 
   void _onIncomingMessage(IncomingMessage message) {
+    if (!_connected) {
+      return; // 断线期间的迟到消息：丢弃 (§21 重连必须重新同步，不得恢复旧状态)
+    }
     ProtocolMessage decoded;
     try {
       decoded = _codec.decode(message.frameType, message.data);
@@ -130,14 +149,9 @@ class DeviceClient {
           _events.add(event);
         }
       case DevicePatch patch:
-        if (!_patches.isClosed) {
-          _patches.add(patch);
-        }
+        _applyPatch(patch);
       case DeviceState state:
-        _currentState = state;
-        if (!_states.isClosed) {
-          _states.add(state);
-        }
+        _applyState(state);
       case DeviceHelloAck ack:
         final pending = _helloPending;
         if (pending != null && !pending.isCompleted) {
@@ -154,9 +168,138 @@ class DeviceClient {
       case DeviceCommand _:
       case DeviceHello _:
       case DeviceResourceRequest _:
+      case DeviceStateRequest _:
         // 设备不应主动发这些消息 (MVP 忽略)
         break;
     }
+  }
+
+  /// 全量状态：直接替换本地副本 (§16.1)。
+  void _applyState(DeviceState state) {
+    _stateMap = state.state;
+    _stateVersion = state.version;
+    if (!_states.isClosed) {
+      _states.add(state);
+    }
+    final pending = _statePending;
+    if (pending != null && !pending.isCompleted) {
+      _statePending = null;
+      pending.complete(state);
+    }
+  }
+
+  /// 增量补丁：应用到本地状态副本 (§16.3)。
+  /// 无基准状态 → 主动请求全量 (§16.6)；
+  /// 版本跳跃 (Gap) → 应用后请求全量兜底 (§16.5)；过期补丁忽略。
+  void _applyPatch(DevicePatch patch) {
+    if (!_patches.isClosed) {
+      _patches.add(patch);
+    }
+    if (_stateVersion == 0) {
+      unawaited(_requestStateIfIdle()); // 无基准，等全量状态
+      return;
+    }
+    final gap = patch.version > _stateVersion + 1;
+    final stale = patch.version <= _stateVersion;
+    if (!stale) {
+      for (final op in patch.ops) {
+        _applyPatchOp(op);
+      }
+      _stateVersion = patch.version;
+      if (!_states.isClosed) {
+        _states.add(DeviceState(
+          version: _stateVersion,
+          state: Map<String, dynamic>.unmodifiable(_stateMap),
+        ));
+      }
+    }
+    if (gap) {
+      unawaited(_requestStateIfIdle()); // §16.5 Gap → 全量补全
+    }
+  }
+
+  /// JSON Patch 子集：replace / add / remove (§16.3)。
+  /// 坏操作 / 路径不存在：忽略，等待 Gap 兜底。
+  void _applyPatchOp(Map<String, dynamic> op) {
+    final path = op['path'];
+    final opName = op['op'];
+    if (path is! String || opName is! String) {
+      return;
+    }
+    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
+    if (parts.isEmpty) {
+      return;
+    }
+    var cur = _stateMap;
+    for (var i = 0; i < parts.length - 1; i++) {
+      final next = cur[parts[i]];
+      if (next is! Map<String, dynamic>) {
+        return;
+      }
+      cur = next;
+    }
+    switch (opName) {
+      case 'replace':
+      case 'add':
+        cur[parts.last] = op['value'];
+      case 'remove':
+        cur.remove(parts.last);
+    }
+  }
+
+  /// 主动请求全量状态 (§16.5/§16.6 STATE_REQUEST)。
+  /// 设备响应为下一条 STATE 消息 (单槽配对)。
+  Future<DeviceState> requestState() async {
+    if (!_connected) {
+      throw StateError('未连接');
+    }
+    final existing = _statePending;
+    if (existing != null) {
+      return existing.future; // 已在请求中
+    }
+    final requestId = _nextRequestId++;
+    final completer = Completer<DeviceState>();
+    _statePending = completer;
+    final message = DeviceStateRequest(requestId: requestId);
+    try {
+      await _channel.send(
+        _codec.encode(message),
+        frameType: message.frameType,
+      );
+    } catch (_) {
+      _statePending = null;
+      rethrow;
+    }
+    return completer.future.timeout(
+      commandTimeout,
+      onTimeout: () {
+        if (identical(_statePending, completer)) {
+          _statePending = null;
+        }
+        throw TimeoutException('状态同步超时 (request_id=$requestId)');
+      },
+    );
+  }
+
+  /// Gap 兜底：无进行中请求时发起全量请求。
+  Future<void> _requestStateIfIdle() async {
+    if (_statePending != null) {
+      return;
+    }
+    try {
+      await requestState();
+    } catch (_) {
+      // 补全失败：下一条 Patch/State 会再次触发 (§16.5)
+    }
+  }
+
+  /// 同步设备状态 (§16.6)：已收到则返回缓存，否则主动请求。
+  Future<DeviceState> syncState() async {
+    final current = currentState;
+    if (current != null) {
+      return current;
+    }
+    return requestState();
   }
 
   /// HELLO 握手 (§39/§15.3)：返回设备 HELLO_ACK。
@@ -239,15 +382,8 @@ class DeviceClient {
     );
   }
 
-  /// 最近一次缓存的设备状态；未收到过则抛 [StateError]。
-  /// (主动拉取 STATE 在 Phase 11 §16.6 实现)
-  Future<DeviceState> getState() async {
-    final state = _currentState;
-    if (state == null) {
-      throw StateError('尚未收到设备状态');
-    }
-    return state;
-  }
+  /// 获取设备状态 (§16.6)：未同步过则主动请求全量。
+  Future<DeviceState> getState() => syncState();
 
   void _failAllPending(Object error) {
     for (final completer in _pending.values) {
@@ -265,6 +401,11 @@ class DeviceClient {
     if (resource != null && !resource.isCompleted) {
       _resourcePending = null;
       resource.completeError(error);
+    }
+    final statePending = _statePending;
+    if (statePending != null && !statePending.isCompleted) {
+      _statePending = null;
+      statePending.completeError(error);
     }
   }
 

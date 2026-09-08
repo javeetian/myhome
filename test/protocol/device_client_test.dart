@@ -7,6 +7,20 @@ import 'package:myhome/protocol/protocol_messages.dart';
 
 import 'fake_ble_device.dart';
 
+/// 轮询等待条件成立 (状态经多层流异步传播)。
+Future<void> waitFor(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('等待条件超时');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 void main() {
   late FakeBleDevice device;
   late DeviceClient client;
@@ -127,13 +141,14 @@ void main() {
     });
 
     test('patches 流收到状态补丁', () async {
+      await waitFor(() => client.hasState); // 等初始状态 (§16.6)
       final received = client.patches.first;
-      device.sendPatch(103, <Map<String, dynamic>>[
+      device.sendPatch(2, <Map<String, dynamic>>[
         <String, dynamic>{'op': 'replace', 'path': '/brightness', 'value': 60},
       ]);
 
       final patch = await received.timeout(const Duration(seconds: 2));
-      expect(patch.version, 103);
+      expect(patch.version, 2);
       expect(patch.ops.single['path'], '/brightness');
     });
 
@@ -147,8 +162,116 @@ void main() {
       expect(state.state['power'], isTrue);
     });
 
-    test('未收到状态时 getState 抛 StateError', () async {
-      await expectLater(client.getState(), throwsA(isA<StateError>()));
+    test('getState 未同步时主动请求全量 (§16.6)', () async {
+      // 重新连接且不推初始状态：客户端无状态基准
+      await client.disconnect();
+      device.pushInitialStateOnConnect = false;
+      await client.connect();
+
+      final state = await client.getState();
+
+      expect(device.receivedStateRequests.length, 1);
+      expect(state.version, 1);
+    });
+  });
+
+  group('Phase 11 状态管理 (§16)', () {
+    test('Patch 应用到本地状态副本 (§16.3)', () async {
+      await waitFor(() => client.hasState); // setUp 连接时已推初始状态 v1
+      device.sendPatch(2, <Map<String, dynamic>>[
+        <String, dynamic>{'op': 'replace', 'path': '/power', 'value': true},
+      ]);
+      await waitFor(() => client.currentState?.version == 2);
+
+      final state = await client.getState();
+      expect(state.version, 2);
+      expect(state.state['power'], isTrue);
+    });
+
+    test('Patch 嵌套路径与 add/remove (§16.3)', () async {
+      await waitFor(() => client.hasState);
+      device.sendState(10, <String, dynamic>{
+        'led': <String, dynamic>{'on': false},
+      });
+      await waitFor(() => client.currentState?.version == 10);
+
+      device.sendPatch(11, <Map<String, dynamic>>[
+        <String, dynamic>{'op': 'replace', 'path': '/led/on', 'value': true},
+        <String, dynamic>{'op': 'add', 'path': '/brightness', 'value': 60},
+      ]);
+      await waitFor(() => client.currentState?.version == 11);
+      device.sendPatch(12, <Map<String, dynamic>>[
+        <String, dynamic>{'op': 'remove', 'path': '/brightness'},
+      ]);
+      await waitFor(() => client.currentState?.version == 12);
+
+      final state = await client.getState();
+      expect(state.version, 12);
+      expect(state.state['led'], <String, dynamic>{'on': true});
+      expect(state.state.containsKey('brightness'), isFalse);
+    });
+
+    test('版本跳跃 (Gap) → 自动 STATE_REQUEST 补全 (§16.5)', () async {
+      await waitFor(() => client.hasState);
+      device.onStateRequest = (request) => const DeviceState(
+            version: 5,
+            state: <String, dynamic>{'power': true, 'brightness': 80},
+          );
+      device.sendPatch(5, <Map<String, dynamic>>[
+        <String, dynamic>{'op': 'replace', 'path': '/brightness', 'value': 60},
+      ]);
+      await waitFor(() => device.receivedStateRequests.length == 1);
+      // 全量兜底覆盖增量结果
+      await waitFor(
+        () => client.currentState?.state['brightness'] == 80,
+      );
+
+      final state = await client.getState();
+      expect(state.version, 5);
+      expect(state.state['brightness'], 80);
+    });
+
+    test('无基准状态的 Patch → 请求全量 (§16.6)', () async {
+      await client.disconnect();
+      device.pushInitialStateOnConnect = false;
+      await client.connect();
+
+      device.onStateRequest = (request) => const DeviceState(
+            version: 3,
+            state: <String, dynamic>{'power': true},
+          );
+      device.sendPatch(3, <Map<String, dynamic>>[
+        <String, dynamic>{'op': 'replace', 'path': '/power', 'value': true},
+      ]);
+      await waitFor(() => client.hasState && client.currentState?.version == 3);
+
+      expect(device.receivedStateRequests.length, 1);
+      expect((await client.getState()).state['power'], isTrue);
+    });
+
+    test('过期 Patch 忽略 (§16.5)', () async {
+      await waitFor(() => client.hasState);
+      device.sendState(10, <String, dynamic>{'power': true});
+      await waitFor(() => client.currentState?.version == 10);
+
+      device.sendPatch(5, <Map<String, dynamic>>[
+        <String, dynamic>{'op': 'replace', 'path': '/power', 'value': false},
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      final state = await client.getState();
+      expect(state.version, 10);
+      expect(state.state['power'], isTrue);
+    });
+
+    test('断线清空状态存储 (§21 重连必须重新同步)', () async {
+      await waitFor(() => client.hasState);
+      device.sendState(9, <String, dynamic>{'power': true});
+      await waitFor(() => client.currentState?.version == 9);
+      expect((await client.getState()).version, 9);
+
+      await client.disconnect();
+      expect(client.hasState, isFalse);
     });
   });
 

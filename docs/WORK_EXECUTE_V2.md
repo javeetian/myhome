@@ -34,7 +34,8 @@ Phase 7  Riverpod              ✅ 完成 (2026-09-08)
 Phase 8  UI Adapter            ✅ 完成 (2026-09-08)
 Phase 9  WebView Runtime       ✅ 完成 (2026-09-08)
 Phase 10 Manifest / UI Package ✅ 完成 (2026-09-08)
-Phase 11 State / Patch / Event ⬜ 未开始 (下一目标)
+Phase 11 State / Patch / Event ✅ 完成 (2026-09-08)
+Phase 12 Security / Production ⬜ 未开始 (下一目标)
 Phase 10 Manifest / UI Package ⬜ 未开始
 Phase 11 State / Patch / Event ⬜ 未开始
 Phase 12 Security / Production ⬜ 未开始
@@ -61,7 +62,7 @@ Phase 12 Security / Production ⬜ 未开始
 16. WebView 加载本地 HTML  ✅ (Phase 9：entryUrl 链路 + Device API Runtime 注入；真机视觉验证待硬件)
 17. HTTP → DeviceClient    ✅ (Phase 8 UiAdapter)
 18. WebSocket → WebView    ✅ (Phase 8 pushStream 单向推送；Phase 9 JS 运行时自动接收)
-19. State / Patch          ⏳ Phase 11 (消息模型已具备，Gap 检测等语义待实现)
+19. State / Patch          ✅ (Phase 11：状态存储 + Patch 应用 + Gap 检测 + 全量同步)
 20. Manifest               ✅ (Phase 10：模型 + HELLO 握手 + /api/device 暴露)
 21. UI Package             ✅ (Phase 10：ui.pkg = tar.gz + 完整下载)
 22. UI Cache               ✅ (Phase 10：deviceId+uiVersion 版本化缓存 + SHA256)
@@ -547,22 +548,78 @@ discovering/negotiating 在 transport 内部尚不可观测；handshaking/loadin
 
 ---
 
-# 15. 下一步：Phase 11 State / Patch / Event
+# 15. Phase 11 执行记录 ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（状态管理为纯 Dart + FakeBleDevice 全链路测试）
+
+## 15.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/protocol/ble_frame.dart | §16.5 扩展 | FrameType.stateRequest (0x32) —— §10.1 注册表扩展，固件侧需对齐 |
+| lib/protocol/protocol_messages.dart | §16.5 | DeviceStateRequest (request_id 配对) |
+| lib/protocol/json_codec.dart | | stateRequest 编解码 |
+| lib/protocol/reliable_channel.dart | | 入站路由补全 0x32 |
+| lib/device/device_client.dart | §16 核心 | 状态存储 (version + map)；Patch 应用 (replace/add/remove)；Gap 检测 → 自动 STATE_REQUEST；过期 Patch 忽略；无基准 Patch → 请求全量；requestState()/syncState()/getState()；断线清空状态存储 (§21)；断线期间迟到消息丢弃 (§21) |
+| lib/providers/device_session_provider.dart | §12.6 | syncingState 阶段接入 (connect 内 HELLO → 状态同步 → connected) |
+| lib/ui_runtime/js_bridge.dart | §14.5 | window.deviceStateVersion 跟踪 (state/patch 均更新) |
+| lib/ui_runtime/ui_adapter.dart | §16.6 | GET /api/state 未同步时主动拉取 |
+| lib/device/demo_device.dart | §16.5 | STATE_REQUEST 处理：回复当前状态快照 (不递增版本) |
+
+## 15.2 设计决策（固件侧需对齐）
+
+- STATE_REQUEST (0x32) 带 request_id；设备回复下一条 STATE 消息 (单槽配对)
+- 全量 STATE 直接替换本地副本；PATCH 增量应用 (JSON Patch 子集 replace/add/remove)
+- Gap 判定：patch.version > current+1 → 应用后自动请求全量兜底 (§16.5)
+- 过期 Patch (version <= current) 忽略；坏操作/路径不存在忽略 (等 Gap 兜底)
+- 断线清空状态存储 (§21)：重连必须 HELLO + 重新同步，不恢复旧状态
+- 断线期间迟到的入站消息丢弃 (generation 语义的 MVP 简化)
+
+## 15.3 过程中修复的问题
+
+1. **断线在途消息污染新会话**：disconnect 后、重连前发出的旧状态消息仍被应用。
+   修复：_onIncomingMessage 增加 _connected 守卫，断线期间迟到消息丢弃
+2. **FakeBleDevice 初始推送覆盖脚本化状态**：delayed 的初始推送晚于测试显式 sendState。
+   修复：已推送过状态 (_lastState != null) 时初始推送跳过 (模拟真实设备行为)
+
+## 15.4 测试（新增 13 例，全套 174/174）
+
+| 用例 | 结果 |
+|---|---|
+| STATE_REQUEST codec round-trip + 缺字段 | ✅ 2 |
+| Patch 应用 / 嵌套路径 add/remove / 过期忽略 | ✅ 3 |
+| Gap → 自动 STATE_REQUEST 补全 (全量覆盖增量) | ✅ 1 |
+| 无基准 Patch → 请求全量；getState 未同步主动请求 | ✅ 2 |
+| 断线清空状态存储 (§21) | ✅ 1 |
+| connect 中间态 handshaking → syncingState + 状态同步完成 | ✅ 2 |
+| /api/state 返回当前状态；JS bridge deviceStateVersion | ✅ 2 |
+
+## 15.5 未完成（待硬件）
+
+- 真机状态同步 / Patch 推送实测
+- Phase 12 项：心跳 (PING/PONG 已注册未实现)、日志系统、安全认证、性能指标
+
+---
+
+# 16. 下一步：Phase 12 Security / Performance / Production
 
 ```text
-目标 (WORK_V2 §16)：
-  STATE / PATCH / EVENT 完整语义 (§16.1-16.4)
-  state_version Gap 检测 → 缺失触发全量 STATE_REQUEST (§16.5/§16.6)
-  DeviceState (Riverpod) → WebSocket → WebView → JS Store (§16.4)
-  主动拉取 STATE (getState 已有缓存版 → 全量同步版)
-  syncingState 阶段接入 (§12.6)
+目标 (WORK_V2 §28-§35)：
+  PING/PONG 心跳 (FrameType 已注册，实现即可)
+  统一日志系统 (§31/§32 格式与等级)
+  Developer Mode 调试面板 (§33)
+  性能指标基线：吞吐量 / UI 加载时间 / 操作延迟 (§28)
+  异常矩阵回归 (§29) + 多设备 (DeviceManager, §22)
+  安全：认证/加密 (正式版, §34/§35)
+  MVP 验证标准核对 (§42 十六项清单)
 ```
 
 可立即开始。
 
 ---
 
-# 16. 执行规则备忘（WORK_V2 §48/§49）
+# 17. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支

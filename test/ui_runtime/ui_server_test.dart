@@ -182,16 +182,12 @@ void main() {
       }
     });
 
-    test('§13.2 GET /api/state：有状态返回 / 无状态 404', () async {
-      final before = await request('/s/$token/api/state');
-      expect(before['statusCode'], 404);
-      expect(before['body']['error']['code'], 2002);
-
+    test('§13.2 GET /api/state：返回设备当前状态 (§16.6)', () async {
       device.sendState(7, <String, dynamic>{'power': true, 'brightness': 80});
       await Future<void>.delayed(const Duration(milliseconds: 200));
-      final after = await request('/s/$token/api/state');
-      expect(after['statusCode'], 200);
-      expect(after['body'], <String, dynamic>{
+      final result = await request('/s/$token/api/state');
+      expect(result['statusCode'], 200);
+      expect(result['body'], <String, dynamic>{
         'version': 7,
         'state': <String, dynamic>{'power': true, 'brightness': 80},
       });
