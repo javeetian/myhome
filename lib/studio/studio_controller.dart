@@ -12,6 +12,7 @@ import '../device/device_manifest.dart';
 import '../device/protocol_device.dart';
 import '../protocol/protocol_messages.dart';
 import '../simulator/fault_injector.dart';
+import 'opened_files_controller.dart';
 import '../ui_runtime/ui_cache.dart';
 import '../ui_runtime/ui_package.dart';
 import '../ui_runtime/ui_server.dart';
@@ -27,6 +28,7 @@ class StudioState {
     this.helloAck,
     this.error,
     this.faultInjector,
+    this.deviceDir,
     this.reloadCount = 0,
     this.protocolLog = const <String>[],
   });
@@ -37,6 +39,10 @@ class StudioState {
 
   /// 故障注入器 (Phase 21 面板操控)。
   final FaultInjector? faultInjector;
+
+  /// 当前设备目录 (devices/ 或外部导入目录)，左栏文件树根。
+  /// null = 设备无目录 (内置 Demo 等)。
+  final String? deviceDir;
 
   /// UI Hot Reload 计数 (Phase 37)：变化时 WebView 重载。
   final int reloadCount;
@@ -71,6 +77,7 @@ class StudioState {
         helloAck: helloAck,
         error: error,
         faultInjector: faultInjector,
+        deviceDir: deviceDir,
         reloadCount: reloadCount ?? this.reloadCount,
         protocolLog: protocolLog ?? this.protocolLog,
       );
@@ -107,8 +114,8 @@ class StudioController extends Notifier<StudioState> {
     return const StudioState();
   }
 
-  /// 启动模拟设备会话。
-  Future<bool> start(ProtocolDevice device) async {
+  /// 启动模拟设备会话。[deviceDir] 为设备源目录 (左栏文件树根)。
+  Future<bool> start(ProtocolDevice device, {String? deviceDir}) async {
     await stop();
     final log = AppLog(level: LogLevel.trace, output: _appendLog);
     // 故障注入包装 (Phase 21)：Studio 面板操控
@@ -154,8 +161,16 @@ class StudioController extends Notifier<StudioState> {
         currentState: client.currentState,
         helloAck: ack,
         faultInjector: injector,
+        deviceDir: deviceDir,
         protocolLog: List<String>.unmodifiable(_logLines),
       );
+      // 编辑器标签：设备有目录 → 自动打开 UI 入口；无目录 (内置 Demo) → 清空
+      final dir = deviceDir;
+      if (dir != null) {
+        ref.read(openedFilesProvider.notifier).resetAndOpen(root: dir);
+      } else {
+        ref.read(openedFilesProvider.notifier).reset();
+      }
       return true;
     } catch (e) {
       _logLines.add('ERROR $e');
@@ -196,7 +211,7 @@ class StudioController extends Notifier<StudioState> {
   /// Smart Light ui.pkg 构建产物路径。
   static String smartLightPkgPath = 'devices/smart_light/build/ui.pkg';
 
-  /// 项目根目录缓存 (解析结果不变)。
+/// 项目根目录缓存 (解析结果不变)。
   static Directory? _projectRoot;
 
   /// 解析项目内路径，不依赖进程 CWD。

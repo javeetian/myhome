@@ -18,7 +18,7 @@ static void hw_set_color_temperature(uint16_t value) {
 static uint16_t hw_get_temperature(void) { return 250; /* 25.0°C */ }
 
 const hardware_adapter_t g_hardware = {
-    .set_power = hw_set_power,
+    .set_power = hw_set_power,s
     .set_brightness = hw_set_brightness,
     .set_color_temperature = hw_set_color_temperature,
     .get_temperature = hw_get_temperature,

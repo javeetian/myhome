@@ -2,21 +2,41 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 
 import '../device/demo_device.dart';
 import '../device/virtual_light.dart';
 import '../simulator/fault_injector.dart';
 import '../ui_runtime/webview_host.dart';
+import 'device_file_tree.dart';
 import 'device_list_controller.dart';
+import 'opened_files_controller.dart';
+import 'source_editor.dart';
+import 'split_pane.dart';
 import 'studio_controller.dart';
 
 /// Device Studio 主页面 (WORK_V3 §22/§30)：
-/// 三栏布局 —— 设备列表 | UI 预览 + Protocol Console | Inspector。
-class StudioHomePage extends ConsumerWidget {
+/// 四栏布局 —— 设备列表 | 文件树 | UI 预览 + Protocol Console | Inspector。
+/// 栏间分割线可拖拽调整宽度。
+class StudioHomePage extends ConsumerStatefulWidget {
   const StudioHomePage({super.key});
 
+  /// 拖拽分割线 Key (测试用)。
+  static const Key deviceListDividerKey = ValueKey<String>('divider-device-list');
+  static const Key fileTreeDividerKey = ValueKey<String>('divider-file-tree');
+  static const Key inspectorDividerKey = ValueKey<String>('divider-inspector');
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<StudioHomePage> createState() => _StudioHomePageState();
+}
+
+class _StudioHomePageState extends ConsumerState<StudioHomePage> {
+  double _deviceListWidth = 220;
+  double _fileTreeWidth = 200;
+  double _inspectorWidth = 260;
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Device Studio'),
@@ -36,15 +56,77 @@ class StudioHomePage extends ConsumerWidget {
             ),
         ],
       ),
-      body: const Row(
+      body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          _DeviceListPanel(),
-          VerticalDivider(width: 1),
-          Expanded(child: _CenterPanel()),
-          VerticalDivider(width: 1),
-          _InspectorPanel(),
+          SizedBox(
+            width: _deviceListWidth,
+            child: const _DeviceListPanel(),
+          ),
+          _PanelDivider(
+            key: StudioHomePage.deviceListDividerKey,
+            onDrag: (delta) => setState(() {
+              _deviceListWidth = (_deviceListWidth + delta).clamp(120.0, 480.0);
+            }),
+          ),
+          // 文件树：与设备列表并排 (当前设备目录)
+          SizedBox(
+            width: _fileTreeWidth,
+            child: Consumer(
+              builder: (context, ref, _) => DeviceFileTree(
+                deviceDir: ref.watch(studioControllerProvider).deviceDir,
+                onFileTap: (path) =>
+                    ref.read(openedFilesProvider.notifier).open(path),
+              ),
+            ),
+          ),
+          _PanelDivider(
+            key: StudioHomePage.fileTreeDividerKey,
+            onDrag: (delta) => setState(() {
+              _fileTreeWidth = (_fileTreeWidth + delta).clamp(120.0, 480.0);
+            }),
+          ),
+          const Expanded(child: _CenterPanel()),
+          _PanelDivider(
+            key: StudioHomePage.inspectorDividerKey,
+            // 拖动向右 → Inspector 变窄
+            onDrag: (delta) => setState(() {
+              _inspectorWidth = (_inspectorWidth - delta).clamp(180.0, 480.0);
+            }),
+          ),
+          SizedBox(
+            width: _inspectorWidth,
+            child: const _InspectorPanel(),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// 可拖拽分割线：5px 命中区 + 1px 视觉线，拖动调整相邻栏宽度。
+class _PanelDivider extends StatelessWidget {
+  const _PanelDivider({super.key, required this.onDrag});
+
+  /// 拖拽回调：delta 为水平位移 (向右为正)。
+  final void Function(double delta) onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeLeftRight,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (details) => onDrag(details.delta.dx),
+        child: SizedBox(
+          width: 5,
+          child: Center(
+            child: Container(
+              width: 1,
+              color: Theme.of(context).colorScheme.outlineVariant,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -60,59 +142,56 @@ class _DeviceListPanel extends ConsumerWidget {
     final studio = ref.watch(studioControllerProvider);
     final devices = ref.watch(deviceListProvider);
 
-    return SizedBox(
-      width: 220,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 4, 0),
-            child: Row(
-              children: <Widget>[
-                Text('设备', style: Theme.of(context).textTheme.titleSmall),
-                const Spacer(),
-                PopupMenuButton<_ListAction>(
-                  icon: const Icon(Icons.more_vert, size: 18),
-                  tooltip: '设备列表操作',
-                  onSelected: (action) => _onListAction(context, ref, action),
-                  itemBuilder: (context) => const <PopupMenuEntry<_ListAction>>[
-                    PopupMenuItem<_ListAction>(
-                      value: _ListAction.create,
-                      child: Row(
-                        children: <Widget>[
-                          Icon(Icons.add_box_outlined, size: 18),
-                          SizedBox(width: 8),
-                          Text('新建设备'),
-                        ],
-                      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 4, 0),
+          child: Row(
+            children: <Widget>[
+              Text('设备', style: Theme.of(context).textTheme.titleSmall),
+              const Spacer(),
+              PopupMenuButton<_ListAction>(
+                icon: const Icon(Icons.more_vert, size: 18),
+                tooltip: '设备列表操作',
+                onSelected: (action) => _onListAction(context, ref, action),
+                itemBuilder: (context) => const <PopupMenuEntry<_ListAction>>[
+                  PopupMenuItem<_ListAction>(
+                    value: _ListAction.create,
+                    child: Row(
+                      children: <Widget>[
+                        Icon(Icons.add_box_outlined, size: 18),
+                        SizedBox(width: 8),
+                        Text('新建设备'),
+                      ],
                     ),
-                    PopupMenuItem<_ListAction>(
-                      value: _ListAction.open,
-                      child: Row(
-                        children: <Widget>[
-                          Icon(Icons.folder_open, size: 18),
-                          SizedBox(width: 8),
-                          Text('打开设备目录'),
-                        ],
-                      ),
+                  ),
+                  PopupMenuItem<_ListAction>(
+                    value: _ListAction.open,
+                    child: Row(
+                      children: <Widget>[
+                        Icon(Icons.folder_open, size: 18),
+                        SizedBox(width: 8),
+                        Text('打开设备目录'),
+                      ],
                     ),
-                  ],
-                ),
-              ],
-            ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(8),
-              children: <Widget>[
-                _demoLightCard(context, ref, studio),
-                for (final info in devices)
-                  _deviceDirCard(context, ref, studio, info),
-              ],
-            ),
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(8),
+            children: <Widget>[
+              _demoLightCard(context, ref, studio),
+              for (final info in devices)
+                _deviceDirCard(context, ref, studio, info),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -234,7 +313,10 @@ class _DeviceListPanel extends ConsumerWidget {
     }
     // 构建产物缺失时从源目录现场打包 (QUICKSTART §2 免前提)
     final pkg = await notifier.loadSmartLightPkg();
-    final ok = await notifier.start(VirtualLight(uiPkgBytes: pkg));
+    final ok = await notifier.start(
+      VirtualLight(uiPkgBytes: pkg),
+      deviceDir: info.dirPath,
+    );
     if (ok) {
       // UI Hot Reload (Phase 37)：源目录变化 → 自动重打包重载
       notifier.startUiWatch(
@@ -434,35 +516,132 @@ class _CreateDeviceDialogState extends State<_CreateDeviceDialog> {
   }
 }
 
-/// 中栏：UI 预览 + Protocol Console (WORK_V3 §24/§30)。
+/// 中栏：编辑器标签栏 + 源码 / UI 预览 (WORK_V3 §24/§30 扩展)。
+/// 右上角按钮切换拆分视图：左源码 | 右 WebView 预览。
 class _CenterPanel extends ConsumerWidget {
   const _CenterPanel();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final studio = ref.watch(studioControllerProvider);
+    final opened = ref.watch(openedFilesProvider);
+    final split = ref.watch(splitPreviewProvider);
+
     return Column(
       children: <Widget>[
+        _EditorTabBar(opened: opened, split: split),
         Expanded(
-          child: studio.entryUrl != null
-              ? WebViewHost(
-                  // reloadCount 变化 → 重建重载 (UI Hot Reload, Phase 37)
-                  key: ValueKey<String>(
-                      '${studio.entryUrl}#${studio.reloadCount}'),
-                  url: studio.entryUrl!,
-                )
-              : Center(
+          child: !studio.isRunning
+              ? Center(
                   child: Text(
                     studio.error != null
                         ? '启动失败: ${studio.error}'
                         : '选择左侧设备开始模拟',
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
-                ),
+                )
+              : _buildContent(studio, opened, split),
         ),
         const Divider(height: 1),
         _ProtocolConsole(lines: studio.protocolLog),
       ],
+    );
+  }
+
+  Widget _buildContent(StudioState studio, OpenedFilesState opened, bool split) {
+    final editor = opened.active == null
+        ? const Center(child: Text('从左侧文件树选择文件'))
+        : SourceEditor(key: ValueKey<String>(opened.active!), path: opened.active!);
+    if (!split) {
+      return editor;
+    }
+    final webview = studio.entryUrl != null
+        ? WebViewHost(
+            // reloadCount 变化 → 重建重载 (UI Hot Reload, Phase 37)
+            key: ValueKey<String>('${studio.entryUrl}#${studio.reloadCount}'),
+            url: studio.entryUrl!,
+          )
+        : const SizedBox.shrink();
+    return SplitPane(left: editor, right: webview);
+  }
+}
+
+/// 编辑器标签栏：已打开文件标签 + 右上角拆分按钮。
+class _EditorTabBar extends ConsumerWidget {
+  const _EditorTabBar({required this.opened, required this.split});
+
+  final OpenedFilesState opened;
+  final bool split;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return SizedBox(
+      height: 30,
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: opened.paths.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(
+                      '未打开文件',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.grey),
+                    ),
+                  )
+                : ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: <Widget>[
+                      for (final path in opened.paths)
+                        _tab(context, ref, path, active: path == opened.active),
+                    ],
+                  ),
+          ),
+          IconButton(
+            icon: Icon(split ? Icons.vertical_split : Icons.splitscreen, size: 16),
+            tooltip: split ? '合并视图' : '拆分视图：源码 | 预览',
+            visualDensity: VisualDensity.compact,
+            onPressed: () =>
+                ref.read(splitPreviewProvider.notifier).toggle(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tab(BuildContext context, WidgetRef ref, String path,
+      {required bool active}) {
+    final name = p.basename(path);
+    return InkWell(
+      onTap: () => ref.read(openedFilesProvider.notifier).setActive(path),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              width: 2,
+              color: active
+                  ? Theme.of(context).colorScheme.primary
+                  : Colors.transparent,
+            ),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Text(name, style: const TextStyle(fontSize: 12)),
+            const SizedBox(width: 4),
+            InkWell(
+              onTap: () =>
+                  ref.read(openedFilesProvider.notifier).close(path),
+              child: const Icon(Icons.close, size: 12),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -519,16 +698,14 @@ class _InspectorPanel extends ConsumerWidget {
     final state = studio.currentState;
     final stats = studio.client?.stats;
 
-    return SizedBox(
-      width: 260,
-      child: ListView(
-        padding: const EdgeInsets.all(8),
-        children: <Widget>[
-          Text('Inspector', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          _row(context, 'Device ID', studio.device?.deviceId ?? '-'),
-          _row(context, 'Model', ack?.deviceModel ?? '-'),
-          _row(context, 'Protocol', '${ack?.protocolVersion ?? 1}'),
+    return ListView(
+      padding: const EdgeInsets.all(8),
+      children: <Widget>[
+        Text('Inspector', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        _row(context, 'Device ID', studio.device?.deviceId ?? '-'),
+        _row(context, 'Model', ack?.deviceModel ?? '-'),
+        _row(context, 'Protocol', '${ack?.protocolVersion ?? 1}'),
           _row(context, 'API Version', '1'),
           _row(context, 'UI Version', ack?.uiVersion ?? '-'),
           _row(context, 'State Version', '${state?.version ?? '-'}'),
@@ -555,28 +732,40 @@ class _InspectorPanel extends ConsumerWidget {
             ),
           ),
           const Divider(),
-          Text('Command', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 4),
-          ..._commandButtons(context, ref),
-          if (studio.faultInjector != null) ...<Widget>[
-            const Divider(),
-            _FaultInjectionPanel(
-              key: ValueKey<FaultInjector>(studio.faultInjector!),
-              injector: studio.faultInjector!,
-            ),
-          ],
+        Text('Command', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 4),
+        ..._commandButtons(context, ref),
+        if (studio.faultInjector != null) ...<Widget>[
+          const Divider(),
+          _FaultInjectionPanel(
+            key: ValueKey<FaultInjector>(studio.faultInjector!),
+            injector: studio.faultInjector!,
+          ),
         ],
-      ),
+      ],
     );
   }
 
   Widget _row(BuildContext context, String label, String value) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: <Widget>[
-            Text(label, style: Theme.of(context).textTheme.bodySmall),
-            Text(value, style: Theme.of(context).textTheme.bodyMedium),
+            Flexible(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                value,
+                style: Theme.of(context).textTheme.bodyMedium,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+              ),
+            ),
           ],
         ),
       );
