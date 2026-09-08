@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Smart Light</title>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 0; background: #f5f6fa; overscroll-behavior: none; -webkit-touch-callout: none; }
+  header { background: #3949ab; color: #fff; padding: 16px; text-align: center; font-size: 18px; }
+  main { padding: 16px; max-width: 480px; margin: 0 auto; }
+  button { display: block; width: 100%; padding: 14px; margin: 10px 0; border: none; border-radius: 8px; background: #3949ab; color: #fff; font-size: 16px; }
+  button:active { opacity: 0.7; }
+  .card { background: #fff; border-radius: 8px; padding: 12px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+  .row { display: flex; justify-content: space-between; align-items: center; }
+  .temp { font-size: 32px; font-weight: bold; color: #3949ab; }
+  input[type=range] { width: 100%; }
+  #log { font-size: 12px; color: #666; font-family: monospace; white-space: pre-wrap; max-height: 140px; overflow: auto; }
+</style>
+</head>
+<body>
+<header>Smart Light</header>
+<main>
+  <div class="card">温度 <span class="temp" id="temp">--</span> ℃</div>
+
+  <div class="card row">
+    <span>电源</span>
+    <button style="width:auto;padding:8px 24px" id="power-btn" onclick="togglePower()">开</button>
+  </div>
+
+  <div class="card">亮度 <span id="br-value">--</span>%
+    <input type="range" id="br" min="0" max="100" onchange="send('light.set_brightness', { value: +this.value })">
+  </div>
+
+  <div class="card">色温 <span id="ct-value">--</span>K
+    <input type="range" id="ct" min="2700" max="6500" step="100" onchange="send('light.set_color_temperature', { value: +this.value })">
+  </div>
+
+  <div class="card"><div id="log">事件日志：</div></div>
+</main>
+<script>
+  var $ = function(id) { return document.getElementById(id); };
+  function log(s) { $('log').textContent += '\n' + s; }
+
+  // Device API Runtime：由 App 自动注入，页面零样板代码
+  deviceApi.onState(function(state) { applyState(state); });
+  deviceApi.onEvent('light.state_changed', function(data) {
+    log('state_changed v' + data.version);
+  });
+
+  async function send(cmd, params) {
+    log('→ ' + cmd + (params ? ' ' + JSON.stringify(params) : ''));
+    try {
+      var resp = await deviceApi.command(cmd, params);
+      log('← ' + resp.status + (resp.error ? ' ' + JSON.stringify(resp.error) : ''));
+    } catch (e) { log('✗ ' + e); }
+  }
+
+  async function togglePower() {
+    var current = window.deviceState.power !== undefined ? window.deviceState.power : false;
+    await send('light.set_power', { power: !current });
+  }
+
+  function applyState(state) {
+    if (state.temperature !== undefined) { $('temp').textContent = state.temperature; }
+    if (state.power !== undefined) {
+      $('power-btn').textContent = state.power ? '关' : '开';
+    }
+    if (state.brightness !== undefined) {
+      $('br').value = state.brightness;
+      $('br-value').textContent = state.brightness;
+    }
+    if (state.color_temperature !== undefined) {
+      $('ct').value = state.color_temperature;
+      $('ct-value').textContent = state.color_temperature;
+    }
+  }
+</script>
+</body>
+</html>

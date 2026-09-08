@@ -131,6 +131,8 @@ class UiServer {
         return _adapter.handleState(request);
       case 'api/device':
         return _adapter.handleDeviceInfo(request);
+      case 'api/manifest':
+        return _adapter.handleManifest(request);
       default:
         if (sub == '__device_api.js') {
           return _serveDeviceApi();

@@ -1,0 +1,13 @@
+{
+  "package": "smart_light_ui",
+  "version": "1.0.0",
+  "device": {
+    "type": "light",
+    "model": "L100"
+  },
+  "protocol": {
+    "version": 1
+  },
+  "entry": "index.html",
+  "api_version": 1
+}

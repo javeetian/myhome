@@ -38,13 +38,13 @@ Phase 6  SimulatorTransport                           ✅ 完成 (接口对齐�
 Phase 7  Virtual Device                               ✅ 完成 (ProtocolDevice 基类)
 Phase 8  Virtual Hardware                             ✅ 完成 (2026-09-08)
 Phase 9  Device Logic                                 ✅ 完成 (2026-09-08)
-Phase 10 DeviceClient                                 ✅ 复用 V2
+Phase 10 DeviceClient                                 ✅ 复用 V2 (回归通过)
 Phase 11 Device API                                   ✅ 复用 V2
 Phase 12 Riverpod                                     ✅ 复用 V2
-Phase 13 UI Package                                   🟡 打包有 (校验 CLI 待 Phase 14)
-Phase 14 UI Package Validation                        ⬜
+Phase 13 UI Package                                   ✅ 完成 (device ui build)
+Phase 14 UI Package Validation                        ✅ 完成 (device ui validate)
 Phase 15 UI Runtime                                   ✅ 复用 V2
-Phase 16 UI Adapter                                   🟡 (待加 /api/manifest)
+Phase 16 UI Adapter                                   ✅ 完成 (补齐 /api/manifest)
 Phase 17 WebSocket                                    ✅ 复用 V2
 Phase 18 Device Studio                                ⬜
 Phase 19 Inspector                                    ⬜
@@ -211,5 +211,44 @@ DeviceClient 零感知切换真实/模拟）。WORK_V3 §18 接口草图与 V2 �
 | Device Logic：状态快照 / 三命令 / 参数校验 3001 / 未知命令 3002 / 越界不改硬件 | ✅ 7 |
 | VirtualLight 全链路：初始状态 / HELLO 能力 / 命令→响应→版本递增→事件 / 业务错误 / 未知命令 / getState | ✅ 6 |
 | 协议层回归 (Phase 3-5) | ✅ 104 |
+
+---
+
+## Phase 10-12 — DeviceClient / Device API / Riverpod（复用 V2）✅
+
+**日期：** 2026-09-08
+**结论：** V2 实现完整覆盖 WORK_V3 §14-§16，回归通过（device_client_test / session / provider 全链路）。
+
+---
+
+## Phase 13-14 — UI Package Build + Validation ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无
+
+### 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| tools/device_cli.dart | §43 | `device ui build <目录> [输出]`：目录 → ui.pkg（构建前校验 manifest/entry）；`device ui validate <ui.pkg>` |
+| lib/ui_runtime/ui_package_validator.dart | §18 | 校验矩阵：corrupted / Missing manifest / entry not found / Protocol version mismatch / Invalid manifest / Hash mismatch / Illegal path，错误一次性收集 |
+| lib/device/device_manifest.dart | V3 §9 | **双格式兼容**：fromJson 接受 V2(ui_version+package.sha256) 与 V3(version+protocol{version}+hash{value}+api_version)；toJson 输出 V3 格式 |
+| devices/smart_light/ui/ | §2 | Smart Light 第一个 UI：manifest.json(V3) + index.html（电源/亮度/色温/温度，纯 deviceApi 零样板） |
+
+### 验证
+
+- CLI 实测：`ui build devices/smart_light/ui` → 1693 bytes / 2 files / sha256 摘要
+- CLI 实测：`ui validate ui.pkg` → PASS (exit 0)
+- 全套测试 231/231（新增 9 例：V3 manifest 2 + validator 7）
+
+---
+
+## Phase 15-17 — UI Runtime / Adapter / WebSocket（复用 + 补齐）✅
+
+**日期：** 2026-09-08
+
+- UI Runtime / WebSocket：V2 复用（随机端口 + token + 注入 + 推送，回归通过）
+- **补齐 /api/manifest**（FRAMEWORK_V3 §15）：UiAdapter.handleManifest →
+  UiServer 路由，manifest 未加载 404；测试覆盖（ui_server_test）
 
 ---

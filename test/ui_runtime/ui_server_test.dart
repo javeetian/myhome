@@ -127,6 +127,13 @@ void main() {
       expect(result['body']['ui_version'], '0.0.0');
       expect(result['body']['capabilities'], isA<List<dynamic>>());
       expect(result['body']['entry'], 'index.html');
+
+      // /api/manifest (FRAMEWORK_V3 §15)
+      final manifestResult = await request('/s/$token2/api/manifest', port: serverWithManifest.port);
+      expect(manifestResult['statusCode'], 200);
+      expect(manifestResult['body']['version'], '1.2.3');
+      expect(manifestResult['body']['entry'], 'index.html');
+      expect(manifestResult['body']['protocol'], <String, dynamic>{'version': 1});
     });
 
     test('§13.3 POST /api/command → DeviceClient 往返', () async {

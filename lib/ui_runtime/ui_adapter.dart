@@ -70,6 +70,16 @@ class UiAdapter {
     }
   }
 
+  /// GET /api/manifest：设备 UI manifest (FRAMEWORK_V3 §15)。
+  /// 来源：_manifest (UiRuntime 加载后传入)；未加载 → 404。
+  Response handleManifest(Request request) {
+    final manifest = _manifest;
+    if (manifest == null) {
+      return _errorResponse(404, 2002, 'manifest 未加载');
+    }
+    return _json(manifest.toJson());
+  }
+
   /// GET /api/device：设备基本信息 + manifest (§15.1/§25)。
   /// HELLO_ACK 字段来自握手结果 (§39)；manifest 经 UiRuntime 加载后提供。
   Response handleDeviceInfo(Request request) => _json(<String, dynamic>{

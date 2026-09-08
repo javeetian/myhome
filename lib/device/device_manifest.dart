@@ -1,16 +1,12 @@
-/// 设备 UI Manifest (WORK_V2 §15.1/§26)。
+/// 设备 UI Manifest (WORK_V2 §15.1 / FRAMEWORK_V3 §9)。
 ///
-/// JSON 结构：
-/// ```json
-/// {
-///   "protocol": 1,
-///   "ui_version": "1.2.3",
-///   "device": {"type": "light", "model": "AC7014"},
-///   "entry": "index.html",
-///   "capabilities": ["power", "brightness"],
-///   "package": {"size": 183421, "sha256": "..."}   // 可选 (§15.5)
-/// }
-/// ```
+/// 双格式兼容 (V3_GAP_ANALYSIS §4.2)：
+/// - V3 格式：package / version / device{type,model} / protocol{version} /
+///   entry / api_version / hash{algorithm,value}
+/// - V2 格式：protocol / ui_version / device{type,model} / entry /
+///   capabilities / package{size,sha256}
+///
+/// toJson 输出 V3 格式 (FRAMEWORK_V3 §9)；fromJson 两种格式均可解析。
 class DeviceManifest {
   const DeviceManifest({
     required this.protocol,
@@ -21,6 +17,7 @@ class DeviceManifest {
     this.capabilities = const <String>[],
     this.packageSize,
     this.packageSha256,
+    this.apiVersion = 1,
   });
 
   /// App 支持的协议版本 (§24)。
@@ -47,17 +44,33 @@ class DeviceManifest {
   /// ui.pkg SHA256 (hex, §15.5 完整性)。
   final String? packageSha256;
 
+  /// Device API 版本 (FRAMEWORK_V3 §9)。
+  final int apiVersion;
+
   factory DeviceManifest.fromJson(Map<String, dynamic> json) {
-    final protocol = json['protocol'];
-    final uiVersion = json['ui_version'];
-    if (protocol is! int) {
+    // protocol：V2 顶层 int；V3 protocol.version
+    final protocolValue = json['protocol'];
+    final protocol = protocolValue is int
+        ? protocolValue
+        : (protocolValue is Map && protocolValue['version'] is int
+            ? protocolValue['version'] as int
+            : null);
+    if (protocol == null) {
       throw const FormatException('manifest 缺少 protocol');
     }
-    if (uiVersion is! String || uiVersion.isEmpty) {
-      throw const FormatException('manifest 缺少 ui_version');
+    // ui 版本：V2 ui_version；V3 version
+    final uiVersion =
+        json['ui_version'] is String ? json['ui_version'] as String : json['version'] is String ? json['version'] as String : null;
+    if (uiVersion == null || uiVersion.isEmpty) {
+      throw const FormatException('manifest 缺少 ui_version/version');
     }
     final device = json['device'];
+    // 完整性：V2 package{size,sha256}；V3 hash{value}
     final pkg = json['package'];
+    final hash = json['hash'];
+    final sha256 = pkg is Map && pkg['sha256'] is String
+        ? pkg['sha256'] as String
+        : (hash is Map && hash['value'] is String ? hash['value'] as String : null);
     return DeviceManifest(
       protocol: protocol,
       uiVersion: uiVersion,
@@ -70,22 +83,24 @@ class DeviceManifest {
       packageSize: pkg is Map<String, dynamic> && pkg['size'] is int
           ? pkg['size'] as int
           : null,
-      packageSha256: pkg is Map<String, dynamic> && pkg['sha256'] is String
-          ? pkg['sha256'] as String
-          : null,
+      packageSha256: sha256,
+      apiVersion: json['api_version'] is int ? json['api_version'] as int : 1,
     );
   }
 
+  /// 输出 V3 格式 (FRAMEWORK_V3 §9)。
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'protocol': protocol,
-        'ui_version': uiVersion,
+        'package': '${deviceType}_ui',
+        'version': uiVersion,
         'device': <String, dynamic>{'type': deviceType, 'model': deviceModel},
+        'protocol': <String, dynamic>{'version': protocol},
         'entry': entry,
-        'capabilities': capabilities,
+        'api_version': apiVersion,
+        if (capabilities.isNotEmpty) 'capabilities': capabilities,
         if (packageSize != null || packageSha256 != null)
-          'package': <String, dynamic>{
-            if (packageSize != null) 'size': packageSize,
-            if (packageSha256 != null) 'sha256': packageSha256,
+          'hash': <String, dynamic>{
+            'algorithm': 'sha256',
+            if (packageSha256 != null) 'value': packageSha256,
           },
       };
 
