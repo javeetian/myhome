@@ -127,4 +127,39 @@ void main() {
     expect(response.isOk, isTrue);
     expect(device.receivedCommands.single.cmd, 'ping');
   });
+
+  test('setPhase: loadingUi → connected (Phase 9 UI 加载)', () async {
+    final notifier = container.read(deviceSessionProvider.notifier);
+    await notifier.connect('dev-1');
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.connected);
+
+    // UI Server 启动完成 → 加载 UI
+    notifier.setPhase(ConnectionPhase.loadingUi);
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.loadingUi);
+
+    // WebView 页面加载完成 → UI Ready
+    notifier.setPhase(ConnectionPhase.connected);
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.connected);
+  });
+
+  test('setPhase: error 终态不可覆盖', () async {
+    final notifier = container.read(deviceSessionProvider.notifier);
+    device.rejectConnect = true;
+    await notifier.connect('dev-1');
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.error);
+
+    notifier.setPhase(ConnectionPhase.connected);
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.error);
+  });
+
+  test('setPhase: disconnected 离线态不可覆盖', () async {
+    final notifier = container.read(deviceSessionProvider.notifier);
+    await notifier.connect('dev-1');
+    device.emitDisconnected();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.disconnected);
+
+    notifier.setPhase(ConnectionPhase.loadingUi);
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.disconnected);
+  });
 }

@@ -221,16 +221,19 @@ const String demoUiHtml = r'''
   var $ = function(id) { return document.getElementById(id); };
   function log(s) { $('log').textContent += '\n' + s; }
 
-  // 相对路径：session token 由 /s/<token>/ 前缀自动携带
+  // Device API Runtime (Phase 9)：由 App 自动注入，页面零样板代码
+  deviceApi.onState(function(state) {
+    applyState(state);
+    log('state v' + (window.__stateVersion || '?') + ': ' + JSON.stringify(state));
+  });
+  deviceApi.onEvent('led.changed', function(data) {
+    log('event led.changed: ' + JSON.stringify(data));
+  });
+
   async function send(cmd, params) {
     log('→ ' + cmd + (params ? ' ' + JSON.stringify(params) : ''));
     try {
-      var r = await fetch('api/command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cmd: cmd, params: params || {} })
-      });
-      var resp = await r.json();
+      var resp = await deviceApi.command(cmd, params);
       log('← ' + resp.status + (resp.error ? ' ' + JSON.stringify(resp.error) : ''));
     } catch (e) { log('✗ ' + e); }
   }
@@ -246,17 +249,6 @@ const String demoUiHtml = r'''
       $('br-value').textContent = state.brightness;
     }
   }
-
-  // WebSocket：设备主动推送 (state / event / patch)
-  var base = location.pathname.match(/^\/s\/[^/]+\//)[0];
-  var ws = new WebSocket('ws://' + location.host + base + 'ws');
-  ws.onmessage = function(e) {
-    var m = JSON.parse(e.data);
-    if (m.type === 'state') { applyState(m.state); log('state v' + m.version + ': ' + JSON.stringify(m.state)); }
-    else if (m.type === 'event') { log('event: ' + m.event + ' ' + JSON.stringify(m.data)); }
-    else if (m.type === 'patch') { log('patch v' + m.version + ': ' + JSON.stringify(m.ops)); }
-  };
-  ws.onclose = function() { log('WS 断开'); };
 </script>
 </body>
 </html>

@@ -3,6 +3,7 @@ import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../device/connection_phase.dart';
 import '../../device/demo_device.dart';
 import '../../providers/ble_provider.dart';
 import '../../providers/device_session_provider.dart';
@@ -86,6 +87,8 @@ class _ScanPageState extends ConsumerState<ScanPage> {
       final error = ref.read(uiServerControllerProvider).error;
       throw StateError('UI Server 启动失败: $error');
     }
+    // UI 加载中 (Phase 9 §12.6)；WebView 页面加载完成后再置 connected
+    ref.read(deviceSessionProvider.notifier).setPhase(ConnectionPhase.loadingUi);
     if (!mounted) {
       return;
     }

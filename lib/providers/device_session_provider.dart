@@ -76,6 +76,19 @@ class DeviceSessionController extends Notifier<DeviceSession> {
     state = const DeviceSession.none();
   }
 
+  /// 由外部阶段事件推进状态 (§12.6)：
+  /// Phase 9 UI 加载 (loadingUi → connected) 等。
+  /// error / disconnected / disconnecting 为终态或离线态，不可覆盖。
+  void setPhase(ConnectionPhase phase) {
+    final current = state.phase;
+    if (current == ConnectionPhase.error ||
+        current == ConnectionPhase.disconnected ||
+        current == ConnectionPhase.disconnecting) {
+      return;
+    }
+    state = state.copyWith(phase: phase);
+  }
+
   void _wireSession(DeviceClient client, BleTransport transport) {
     _stateSub = client.states.listen((deviceState) {
       state = state.copyWith(deviceState: deviceState);

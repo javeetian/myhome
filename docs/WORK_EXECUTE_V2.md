@@ -32,7 +32,8 @@ Phase 5  Device Protocol       ✅ 完成 (2026-09-08，纯 Dart)
 Phase 6  DeviceClient          ✅ 完成 (2026-09-08，纯 Dart)
 Phase 7  Riverpod              ✅ 完成 (2026-09-08)
 Phase 8  UI Adapter            ✅ 完成 (2026-09-08)
-Phase 9  WebView Runtime       ⬜ 未开始 (下一目标)
+Phase 9  WebView Runtime       ✅ 完成 (2026-09-08)
+Phase 10 Manifest / UI Package ⬜ 未开始 (下一目标)
 Phase 10 Manifest / UI Package ⬜ 未开始
 Phase 11 State / Patch / Event ⬜ 未开始
 Phase 12 Security / Production ⬜ 未开始
@@ -56,9 +57,9 @@ Phase 12 Security / Production ⬜ 未开始
 13. 实现 DeviceClient      ✅
 14. 接入 Riverpod          ✅ (会话控制器 + provider 族)
 15. 实现 Shelf             ✅ (Phase 8：UiServer + UiAdapter，随机端口 + token + Origin 校验)
-16. WebView 加载本地 HTML  ⏳ Phase 9 (entryUrl 已就绪)
+16. WebView 加载本地 HTML  ✅ (Phase 9：entryUrl 链路 + Device API Runtime 注入；真机视觉验证待硬件)
 17. HTTP → DeviceClient    ✅ (Phase 8 UiAdapter)
-18. WebSocket → WebView    ✅ (Phase 8 pushStream 单向推送)
+18. WebSocket → WebView    ✅ (Phase 8 pushStream 单向推送；Phase 9 JS 运行时自动接收)
 ```
 
 ---
@@ -443,21 +444,63 @@ discovering/negotiating 在 transport 内部尚不可观测；handshaking/loadin
 
 ---
 
-# 12. 下一步：Phase 9 WebView Runtime
+# 12. Phase 9 执行记录 ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（注入/服务为纯 Dart + TCP 回环测试）；WebView 真机视觉验证待模拟器/真机
+
+## 12.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/ui_runtime/js_bridge.dart | §14.3/§14.5 | Device API Runtime：window.deviceState + deviceApi (command/getState/onState/onEvent/onPatch)；Patch 自动应用 (replace/add/remove)；WS 自动连接；injectDeviceApi() 纯函数 |
+| lib/ui_runtime/ui_server.dart | §14.2 | HTML 自动注入 `<script src="__device_api.js">`；提供 `/s/<token>/__device_api.js` 路由 |
+| lib/ui_runtime/webview_host.dart | §23 | onPageLoaded 回调 (UI Ready 信号) |
+| lib/providers/device_session_provider.dart | §12.6 | setPhase()：loadingUi → connected；error/disconnected/disconnecting 不可覆盖 |
+| lib/ui/pages/scan_page.dart | §12.6 | UI Server 启动后进入 loadingUi |
+| lib/ui/pages/device_page.dart | §20/§23 | 页面加载完成 → connected；设备断开/异常 → 提示并自动返回扫描页 |
+| lib/device/demo_device.dart | §14.3 | 演示页改用官方 deviceApi (dogfooding，移除手写 fetch/WS 样板) |
+
+## 12.2 设计决策（UI 开发规范侧需对齐）
+
+- **Device API Runtime 由服务器注入**（`<head>` 后阻塞脚本）：设备页面零样板代码，
+  不需要手写 fetch / WebSocket / token 逻辑，直接使用 `window.deviceApi`
+- 注入点在 `<head>` 之后：保证页面脚本执行前 deviceApi 已就绪
+- Patch 由运行时自动应用到 deviceState 并派发回调（JSON Patch 子集）
+- UI Ready 信号：WebView onPageFinished → phase = connected (§23 生命周期)
+- 设备断开/异常：控制页自动弹回扫描页并提示（§20 断线流程）
+
+## 12.3 测试（9/9 通过，全套 129/129）
+
+| 用例 | 结果 |
+|---|---|
+| injectDeviceApi：head 注入 / html 回退 / 前置兜底 | ✅ |
+| 服务器：HTML 注入 / 非 HTML 不注入 / __device_api.js 提供 | ✅ |
+| setPhase：loadingUi→connected / error 终态不可覆盖 / disconnected 不可覆盖 | ✅ |
+
+## 12.4 未完成（待硬件/模拟器）
+
+- WebView 真机视觉验证：页面渲染、deviceApi 调用、WS 推送的可视化确认
+- Phase 10 接入后：entryUrl 加载真实 ui.pkg
+
+---
+
+# 13. 下一步：Phase 10 Manifest / UI Package / Cache
 
 ```text
-目标 (WORK_V2 §14)：
-  WebView 加载 entryUrl (http://127.0.0.1:<随机端口>/s/<token>/，本阶段已就绪)
-  UI Package → Local HTTP Server → WebView (§14.2)
-  DevicePage 已接入 entryUrl + 断线处理，待真机/模拟器验证加载与 JS 交互
-  静态服务正式接入 UiCache 目录 (当前演示设备已走通)
+目标 (WORK_V2 §15)：
+  manifest.json (protocol / ui_version / device / entry / capabilities)
+  ui.pkg 打包格式 (manifest + index.html + assets, gzip)
+  下载 + SHA256 校验 + UI Cache (deviceId + ui_version 命中, §15.4)
+  /api/resource/<path> 真实实现 (Phase 8 为 501 占位, §27)
+  HELLO / HELLO_ACK (handshaking 阶段接入, §12.6)
 ```
 
 可立即开始。
 
 ---
 
-# 13. 执行规则备忘（WORK_V2 §48/§49）
+# 14. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支

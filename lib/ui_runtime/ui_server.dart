@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -9,6 +10,7 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../device/device_client.dart';
+import 'js_bridge.dart';
 import 'ui_adapter.dart';
 
 /// 本地 UI Server (WORK_V2 §13.1)：Shelf HTTP + WebSocket 服务器。
@@ -124,6 +126,9 @@ class UiServer {
       case 'api/device':
         return _adapter.handleDeviceInfo(request);
       default:
+        if (sub == '__device_api.js') {
+          return _serveDeviceApi();
+        }
         if (sub.startsWith('api/resource')) {
           final resourcePath = sub.length > 'api/resource'.length
               ? sub.substring('api/resource'.length + 1)
@@ -133,6 +138,15 @@ class UiServer {
         return _handleStatic(sub);
     }
   }
+
+  /// Device API Runtime 脚本 (Phase 9 §14.3/§14.5)，随页面相对路径引用。
+  Response _serveDeviceApi() => Response.ok(
+        deviceApiRuntimeJs,
+        headers: <String, String>{
+          'content-type': 'application/javascript; charset=utf-8',
+          'cache-control': 'no-store',
+        },
+      );
 
   static bool _isLocalOrigin(String origin) {
     final host = Uri.tryParse(origin)?.host ?? '';
@@ -163,10 +177,14 @@ class UiServer {
     if (!file.existsSync()) {
       return Response.notFound('not found: $name');
     }
-    return Response.ok(
-      file.readAsBytesSync(),
-      headers: <String, String>{'content-type': _contentType(name)},
-    );
+    var bytes = file.readAsBytesSync();
+    final headers = <String, String>{'content-type': _contentType(name)};
+    if (name.endsWith('.html')) {
+      // 注入 Device API Runtime (Phase 9 §14.3/§14.5)：设备页面零样板代码
+      bytes = utf8.encode(injectDeviceApi(utf8.decode(bytes)));
+      headers['cache-control'] = 'no-store';
+    }
+    return Response.ok(bytes, headers: headers);
   }
 
   String _contentType(String rel) {

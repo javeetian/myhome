@@ -7,7 +7,7 @@
 /// ```
 ///
 /// discovering / negotiating 目前发生在 ReactiveBleTransport.connect 内部，
-/// 尚不可观测；handshaking (HELLO) 归 Phase 10，loadingUi 归 Phase 9/10，
+/// 尚不可观测；handshaking (HELLO) 归 Phase 10，loadingUi 已接入 (Phase 9)，
 /// syncingState 归 Phase 11 —— 届时在对应阶段接入。
 enum ConnectionPhase {
   disconnected,
