@@ -31,13 +31,13 @@ UI Runtime/State-Patch/日志/Session Token/缓存）标注 **复用 V2**，
 Phase 0  工程初始化 (Windows/macOS + webview_windows)  ✅ 完成 (2026-09-08)
 Phase 1  Device Definition                            ✅ 完成 (2026-09-08)
 Phase 2  Schema Validation                            ✅ 完成 (2026-09-08)
-Phase 3  Protocol Frame                               ✅ 复用 V2 (待回归确认)
+Phase 3  Protocol Frame                               ✅ 复用 V2 (104/104 回归)
 Phase 4  Codec                                        ✅ 复用 V2
 Phase 5  Fragment                                     ✅ 复用 V2
-Phase 6  SimulatorTransport                           🟡 V2 DemoDevice 等价 (待接口对齐)
-Phase 7  Virtual Device                               🟡 部分 (待拆分 Logic/Hardware)
-Phase 8  Virtual Hardware                             ⬜
-Phase 9  Device Logic                                 ⬜
+Phase 6  SimulatorTransport                           ✅ 完成 (接口对齐决策)
+Phase 7  Virtual Device                               ✅ 完成 (ProtocolDevice 基类)
+Phase 8  Virtual Hardware                             ✅ 完成 (2026-09-08)
+Phase 9  Device Logic                                 ✅ 完成 (2026-09-08)
 Phase 10 DeviceClient                                 ✅ 复用 V2
 Phase 11 Device API                                   ✅ 复用 V2
 Phase 12 Riverpod                                     ✅ 复用 V2
@@ -158,5 +158,58 @@ duplicate command / 参数类型错误 / min>max / YAML 语法错误 / 多错误
 
 - 校验策略：一次收集全部错误（而非遇错即停），开发者一次看全问题
 - ValueType 白名单（6 类型），未知类型明确报 unsupported type（为 Phase 25 Code Generator 的类型系统打底）
+
+---
+
+## Phase 3-5 — Protocol Frame / Codec / Fragment（复用 V2）✅
+
+**日期：** 2026-09-08
+**结论：** V2 实现完整覆盖 WORK_V3 §7-§9 全部验收矩阵，回归 104/104 通过。
+
+- Phase 3 Frame：正常/空/最大 Payload/CRC 错/Length 错/Version 错/非法 Type ✅
+- Phase 4 Codec：COMMAND/RESPONSE/EVENT/STATE/PATCH (+HELLO/RESOURCE/STATE_REQUEST/PING/PONG) ✅
+- Phase 5 Fragment：乱序/重复/丢失/超时/错误 TOTAL/错误 LENGTH + 大小矩阵 (100B-50KB) ✅
+
+---
+
+## Phase 6 — SimulatorTransport（接口对齐）✅
+
+**决策：** 不另设 DeviceTransport 抽象。现有 **BleTransport 即统一接口**
+（WORK_V3 §33 要求 BleTransport 与 SimulatorTransport 接口相同 —— 现状已满足：
+DemoDevice/VirtualLight 作为 SimulatorTransport 直接 implements BleTransport，
+DeviceClient 零感知切换真实/模拟）。WORK_V3 §18 接口草图与 V2 实现的
+字段名差异见 V3_GAP_ANALYSIS.md §4，语义等价。
+
+---
+
+## Phase 7-9 — Virtual Device / Virtual Hardware / Device Logic ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（全链路 DeviceClient ↔ VirtualLight 测试）
+
+### 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/device/protocol_device.dart | §4 核心原则 | **ProtocolDevice 基类**：真实/模拟设备共享的协议行为（Frame 解码/分片/ACK/HELLO/RESOURCE/STATE_REQUEST/PING），子类只写设备信息与业务命令 |
+| lib/device/virtual_hardware.dart | §8/§26 | VirtualPwm / VirtualGpio / VirtualSensor + LightHardware（对应 C 侧 Hardware Adapter §27/§31） |
+| lib/device/light_device_logic.dart | §9/§27 | LightDeviceLogic：三命令分发 + 严格参数校验 + 边界钳位，纯业务层零协议依赖 |
+| lib/device/virtual_light.dart | §2/§7 | VirtualLight：smart_light 协议 + 状态版本管理 + 5s 温度采样 + state_changed 事件 |
+| lib/device/demo_device.dart | 重构 | 基于 ProtocolDevice 基类重写（协议代码移除，行为不变） |
+
+### 过程中修复的问题
+
+1. **设备初始状态早期丢失**：设备在 transport.connect() 返回前推送初始状态，
+   而 DeviceClient 的入站 listen 与 _connected 守卫在 connect 之后才建立。
+   修复：listen 与 _connected 先于 transport.connect（§16.6 语义修正）。
+
+### 验证（新增 18 例，全套 222/222）
+
+| 用例 | 结果 |
+|---|---|
+| VirtualPwm 钳位 / Gpio / Sensor 漂移 / LightHardware 初始值 | ✅ 4 |
+| Device Logic：状态快照 / 三命令 / 参数校验 3001 / 未知命令 3002 / 越界不改硬件 | ✅ 7 |
+| VirtualLight 全链路：初始状态 / HELLO 能力 / 命令→响应→版本递增→事件 / 业务错误 / 未知命令 / getState | ✅ 6 |
+| 协议层回归 (Phase 3-5) | ✅ 104 |
 
 ---

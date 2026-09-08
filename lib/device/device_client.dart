@@ -137,11 +137,13 @@ class DeviceClient {
   /// 连接设备并开始收发 (§11.1)。
   Future<void> connect() async {
     _channel.start(); // 先订阅通知流，避免丢失早期帧
-    await _channel.transport.connect(_deviceId);
+    // 入站监听与 _connected 均先于 transport.connect：
+    // 设备可能在 connect 完成前推送初始状态 (§16.6)
+    _channel.messages.listen(_onIncomingMessage);
     _connected = true;
+    await _channel.transport.connect(_deviceId);
     stats.markConnected();
     log.info('DEVICE', '已连接', deviceId: _deviceId);
-    _channel.messages.listen(_onIncomingMessage);
   }
 
   /// 断开并失败所有进行中的命令。
