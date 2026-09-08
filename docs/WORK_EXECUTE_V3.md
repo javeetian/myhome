@@ -46,9 +46,9 @@ Phase 14 UI Package Validation                        ✅ 完成 (device ui vali
 Phase 15 UI Runtime                                   ✅ 复用 V2
 Phase 16 UI Adapter                                   ✅ 完成 (补齐 /api/manifest)
 Phase 17 WebSocket                                    ✅ 复用 V2
-Phase 18 Device Studio                                ⬜
-Phase 19 Inspector                                    ⬜
-Phase 20 Protocol Console                             ⬜
+Phase 18 Device Studio                                ✅ 完成 (2026-09-08)
+Phase 19 Inspector                                    ✅ 完成 (2026-09-08)
+Phase 20 Protocol Console                             ✅ 完成 (2026-09-08)
 Phase 21 Fault Injection                              🟡 (内核在测试 Fake，待产品化)
 Phase 22 Reconnect                                    🟡 (待加 reconnecting 状态)
 Phase 23 State / Patch                                ✅ 复用 V2
@@ -250,5 +250,47 @@ DeviceClient 零感知切换真实/模拟）。WORK_V3 §18 接口草图与 V2 �
 - UI Runtime / WebSocket：V2 复用（随机端口 + token + 注入 + 推送，回归通过）
 - **补齐 /api/manifest**（FRAMEWORK_V3 §15）：UiAdapter.handleManifest →
   UiServer 路由，manifest 未加载 404；测试覆盖（ui_server_test）
+
+---
+
+## Phase 18-20 — Device Studio ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（控制器测试 + 页面渲染测试 + Windows 构建验证）
+
+### 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/studio/studio_main.dart | §28 | 桌面入口：`flutter run -d windows -t lib/studio/studio_main.dart` |
+| lib/studio/studio_app.dart + studio_home_page.dart | §30 | 三栏布局：设备列表(220) \| UI 预览 + Protocol Console \| Inspector(260) |
+| lib/studio/studio_controller.dart | §29 | 会话编排：连接→HELLO→状态同步→心跳→UI 包解压缓存→UiServer→日志收集；stop/reset/sendCommand |
+| lib/device/virtual_light.dart | §29 | 支持外部 ui.pkg (Studio 加载构建产物) + reset() 硬件/状态复位 |
+| lib/device/protocol_device.dart | §7 | reset() 钩子 (默认 no-op) |
+| lib/protocol/reliable_channel.dart | §24 | RX 帧级日志 (Protocol Console 数据源) |
+
+### 功能对照 (§29 第一版清单)
+
+Load UI Package ✅ / Select Device ✅ / Start Simulator ✅ / Run UI ✅ (WebView2)
+/ View State ✅ / Send Command ✅ / View Protocol ✅ (帧级 TX/RX)
+/ View Logs ✅ / Reset Device ✅ / Disconnect ✅
+
+### 过程中修复的问题
+
+1. **provider dispose 后触碰 state**：ref.onDispose(stop) 在 dispose 期间写 state 抛
+   "Cannot use the Ref after disposed"。修复：资源释放 (_disposeResources 用私有字段缓存)
+   与状态重置 (stop 内 ref.mounted 守卫) 分离。
+
+### 验证
+
+- 全套测试 238/238（新增 7 例：控制器 6 + 页面渲染 1）
+- `flutter build windows -t lib/studio/studio_main.dart` ✅
+- 运行方式：`flutter run -d windows -t lib/studio/studio_main.dart`
+  （Smart Light 卡片自动加载 devices/smart_light/build/ui.pkg 构建产物）
+
+### 遗留
+
+- Studio 真机视觉验证（WebView2 渲染/交互）待用户桌面运行确认
+- UI Hot Reload (Phase 37)、故障注入面板 (Phase 21) 待后续 Phase
 
 ---

@@ -180,6 +180,13 @@ class ReliableChannel {
   }
 
   void _handleFrame(BleFrame frame) {
+    // Protocol Console 数据源 (WORK_V3 §24)：帧级 TX/RX 日志
+    log.trace(
+      'BLE',
+      'RX type=0x${frame.type.toRadixString(16).padLeft(2, '0')} '
+      'seq=${frame.sequence} len=${frame.payload.length}',
+      seq: frame.sequence,
+    );
     switch (frame.type) {
       case FrameType.ack:
         _handleAck(frame.payload, nack: false);

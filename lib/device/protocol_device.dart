@@ -49,6 +49,9 @@ abstract class ProtocolDevice implements BleTransport {
   /// 资源内容 (manifest.json / ui.pkg 等)；null = 资源不存在。
   Uint8List? resourceBytes(String path);
 
+  /// 重置设备状态 (WORK_V3 §7/§29)。默认无操作，子类覆写。
+  Future<void> reset() async {}
+
   // ---- 协议栈 ----
 
   final StreamController<List<int>> _notifications =
