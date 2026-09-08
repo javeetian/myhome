@@ -1,0 +1,48 @@
+# Smart Light — 第一个参考设备 (WORK_V3 §2)
+device:
+  id: smart_light
+  name: Smart Light
+  model: L100
+
+protocol:
+  version: 1
+
+api:
+  version: 1
+
+state:
+  power:
+    type: bool
+
+  brightness:
+    type: uint8
+    min: 0
+    max: 100
+
+  color_temperature:
+    type: uint16
+    min: 2700
+    max: 6500
+
+commands:
+  - name: light.set_power
+    params:
+      power:
+        type: bool
+
+  - name: light.set_brightness
+    params:
+      value:
+        type: uint8
+        min: 0
+        max: 100
+
+  - name: light.set_color_temperature
+    params:
+      value:
+        type: uint16
+        min: 2700
+        max: 6500
+
+events:
+  - name: light.state_changed

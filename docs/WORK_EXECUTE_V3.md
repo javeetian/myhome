@@ -29,8 +29,8 @@ UI Runtime/State-Patch/日志/Session Token/缓存）标注 **复用 V2**，
 
 ```text
 Phase 0  工程初始化 (Windows/macOS + webview_windows)  ✅ 完成 (2026-09-08)
-Phase 1  Device Definition                            ⬜
-Phase 2  Schema Validation                            ⬜
+Phase 1  Device Definition                            ✅ 完成 (2026-09-08)
+Phase 2  Schema Validation                            ✅ 完成 (2026-09-08)
 Phase 3  Protocol Frame                               ✅ 复用 V2 (待回归确认)
 Phase 4  Codec                                        ✅ 复用 V2
 Phase 5  Fragment                                     ✅ 复用 V2
@@ -126,5 +126,37 @@ Phase 38 Studio 完善                                   ⬜
 
 - 目录采用单仓库变体（项目根 = 平台仓库），不搬迁现有工程（见 §2 决策）
 - macOS 平台目录已生成，Windows 环境无法验证；macOS 验收待 Mac 机器
+
+---
+
+## Phase 1-2 — Device Definition + Schema Validation ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（纯 Dart）
+
+### 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/device/device_definition.dart | WORK_V3 §5-§7 | DeviceDefinition / StateDefinition / CommandDefinition / ParamDefinition / EventDefinition + ValueType (bool/uint8/uint16/int32/float/string)；fromYaml 一次性收集全部错误 |
+| devices/smart_light/device.yaml | §2/§6 | Smart Light 参考设备：power/brightness/color_temperature + 3 命令 + state_changed 事件 |
+| tools/device_cli.dart | §43 | `device validate <device.yaml>`：PASS(exit 0) / ERROR(exit 1) / 用法错误(exit 2) |
+| test/device/device_definition_test.dart | §6 | 11 例 |
+
+### 验证
+
+- CLI 实测：`validate devices/smart_light/device.yaml` → PASS (state=3, commands=3, events=1)
+- CLI 实测：不存在文件 → ERROR exit 1
+- 全套测试 204/204（新增 11 例：解析 2 + 错误矩阵 9）
+
+### 错误矩阵覆盖（WORK_V3 §6 清单）
+
+missing device.id / missing protocol.version / unsupported type / params 非 map /
+duplicate command / 参数类型错误 / min>max / YAML 语法错误 / 多错误一次性收集 ✅
+
+### 决策
+
+- 校验策略：一次收集全部错误（而非遇错即停），开发者一次看全问题
+- ValueType 白名单（6 类型），未知类型明确报 unsupported type（为 Phase 25 Code Generator 的类型系统打底）
 
 ---
