@@ -49,6 +49,9 @@ class DeviceClient {
   final MessageCodec _codec;
   final ReliableChannel _channel;
 
+  /// 设备标识 (UI Adapter 的 /api/device 使用)。
+  String get deviceId => _deviceId;
+
   /// 命令响应超时 (设备 ACK 后迟迟不回业务响应)。
   final Duration commandTimeout;
 

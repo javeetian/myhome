@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/constants.dart';
-import '../../providers/demo_device_session_provider.dart';
+import '../../providers/device_session_provider.dart';
 import '../../providers/ui_runtime_provider.dart';
 import '../../ui_runtime/webview_host.dart';
 
@@ -20,7 +19,7 @@ class DevicePage extends ConsumerStatefulWidget {
 class _DevicePageState extends ConsumerState<DevicePage> {
   Future<void> _disconnect() async {
     await ref.read(uiServerControllerProvider.notifier).stop();
-    ref.read(demoDeviceSessionControllerProvider.notifier).select(null);
+    await ref.read(deviceSessionProvider.notifier).disconnect();
     if (mounted) {
       Navigator.of(context).pop();
     }
@@ -28,6 +27,7 @@ class _DevicePageState extends ConsumerState<DevicePage> {
 
   @override
   Widget build(BuildContext context) {
+    final entryUrl = ref.watch(uiServerControllerProvider).entryUrl;
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.name),
@@ -39,7 +39,9 @@ class _DevicePageState extends ConsumerState<DevicePage> {
           ),
         ],
       ),
-      body: WebViewHost(url: AppConstants.proxyBaseUrl),
+      body: entryUrl == null
+          ? const Center(child: Text('UI 服务未启动'))
+          : WebViewHost(url: entryUrl),
     );
   }
 }

@@ -31,8 +31,8 @@ Phase 4  ACK / Retry / Queue   ✅ 完成 (2026-09-08，纯 Dart)
 Phase 5  Device Protocol       ✅ 完成 (2026-09-08，纯 Dart)
 Phase 6  DeviceClient          ✅ 完成 (2026-09-08，纯 Dart)
 Phase 7  Riverpod              ✅ 完成 (2026-09-08)
-Phase 8  UI Adapter            ⬜ 未开始 (下一目标)
-Phase 9  WebView Runtime       ⬜ 未开始
+Phase 8  UI Adapter            ✅ 完成 (2026-09-08)
+Phase 9  WebView Runtime       ⬜ 未开始 (下一目标)
 Phase 10 Manifest / UI Package ⬜ 未开始
 Phase 11 State / Patch / Event ⬜ 未开始
 Phase 12 Security / Production ⬜ 未开始
@@ -55,6 +55,10 @@ Phase 12 Security / Production ⬜ 未开始
 12. 实现 Device Protocol   ✅ (消息模型 + JSON Codec；DeviceClient 下一阶段)
 13. 实现 DeviceClient      ✅
 14. 接入 Riverpod          ✅ (会话控制器 + provider 族)
+15. 实现 Shelf             ✅ (Phase 8：UiServer + UiAdapter，随机端口 + token + Origin 校验)
+16. WebView 加载本地 HTML  ⏳ Phase 9 (entryUrl 已就绪)
+17. HTTP → DeviceClient    ✅ (Phase 8 UiAdapter)
+18. WebSocket → WebView    ✅ (Phase 8 pushStream 单向推送)
 ```
 
 ---
@@ -390,21 +394,70 @@ discovering/negotiating 在 transport 内部尚不可观测；handshaking/loadin
 
 ---
 
-# 11. 下一步：Phase 8 UI Adapter
+# 11. Phase 8 执行记录 ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（HTTP 层测试用 FakeBleDevice + 真实 TCP 回环）
+
+## 11.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/ui_runtime/ui_adapter.dart | §13.3/§13.4 | HTTP/WS 语义 → DeviceClient：api/command、api/state、api/device、api/resource(501)、pushStream (state/event/patch → JSON) |
+| lib/ui_runtime/ui_server.dart | §13.1/§13.2/§13.5 | 仅绑定 127.0.0.1 + 随机端口 + 随机 token；全部路由挂 `/s/<token>/` 前缀；Origin 校验；静态服务保留 (Phase 9 接 UI Package) |
+| lib/providers/ui_runtime_provider.dart | §12.3 | UiServerController.start(DeviceClient, {staticRoot})；entryUrl (含 token) 暴露给 WebView |
+| lib/device/demo_device.dart | §30 | 无硬件演示设备：复用本项目协议栈 dogfooding (解码/组装/编解码)，LED/亮度/温度 + 定时状态推送 |
+| lib/device/device_client.dart | 小改 | 暴露 deviceId getter (/api/device 使用) |
+| lib/providers/device_session_provider.dart | 小改 | connect() 支持注入 transport (演示/测试)，缺省仍走 bleTransportProvider |
+
+## 11.2 移除（旧演示栈，§10.2 计划项）
+
+- lib/device/demo_device_channel.dart / mock_demo_device_channel.dart / ble_demo_device_channel.dart
+- lib/providers/demo_device_session_provider.dart
+- lib/core/constants.dart（固定端口 8080 常量，§13.5 已要求随机端口）
+
+## 11.3 设计决策（固件/UI 规范侧需对齐）
+
+- **token 用路径前缀** `/s/<token>/`：设备页面全部相对路径即可自动携带 token，无需感知；WS 地址从 `location` 推导
+- **Origin 校验**：带 Origin 头的请求必须来自本机 (127.0.0.1 / localhost / ::1)，否则 403
+- **WS Phase 8 单向**（设备 → WebView）；WebView → 设备走 POST /api/command
+- **错误语义**：适配层坏请求 → 400 + 3001；传输失败/超时 → 500 + 2002；Resource 未实现 → 501 + 5001；设备业务错误正常 200
+- **shelf 行为**：`Request.url.path` 是相对路径 (无前导 /)，路由前统一归一化 —— 这是 shelf 的文档化行为，非 bug
+
+## 11.4 测试（11/11 通过，全套 120/120）
+
+| 用例 | 结果 |
+|---|---|
+| §13.5 随机端口 + 随机 token + entryUrl 格式 | ✅ |
+| §13.2 api/device 信息 / api/command 往返 (echo 校验设备侧收到) / api/state (无状态 404) | ✅ |
+| 设备业务错误 (status=error) 正常 200 / 适配层坏请求 400+3001 ×3 | ✅ |
+| 无 token / 错 token → 404；非本机 Origin → 403 (本机放行) | ✅ |
+| api/resource → 501+5001；静态 index.html / css + 目录穿越防护 | ✅ |
+| §14.4 WS 推送 state / event / patch 顺序转发 | ✅ |
+
+## 11.5 遗留
+
+- Origin 白名单为"本机任意端口"，正式版可收紧到固定入口
+- /api/resource 真实实现 Phase 10 §27
+- 真实设备联调仍待硬件 (见 §2)；演示设备 (DemoDevice) 已覆盖无硬件全链路
+
+---
+
+# 12. 下一步：Phase 9 WebView Runtime
 
 ```text
-目标 (WORK_V2 §13)：
-  Shelf 本地 HTTP 服务器 (127.0.0.1 + 随机端口 + session token §13.5)
-  GET /api/device、GET /api/state、POST /api/command、GET /api/resource/<path>、WS /ws (§13.2)
-  HTTP → UI Adapter → DeviceClient (§13.3)
-  旧 UiServer (DemoDeviceChannel) 由新 DeviceClient 版本替代
+目标 (WORK_V2 §14)：
+  WebView 加载 entryUrl (http://127.0.0.1:<随机端口>/s/<token>/，本阶段已就绪)
+  UI Package → Local HTTP Server → WebView (§14.2)
+  DevicePage 已接入 entryUrl + 断线处理，待真机/模拟器验证加载与 JS 交互
+  静态服务正式接入 UiCache 目录 (当前演示设备已走通)
 ```
 
 可立即开始。
 
 ---
 
-# 12. 执行规则备忘（WORK_V2 §48/§49）
+# 13. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支

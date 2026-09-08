@@ -1,34 +1,38 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../core/constants.dart';
-import '../device/demo_device_channel.dart';
+import '../device/device_client.dart';
 import '../ui_runtime/ui_server.dart';
 
 /// UI Server 运行状态。
 class UiServerState {
-  const UiServerState({this.server, this.error});
+  const UiServerState({this.server, this.entryUrl, this.error});
 
   final UiServer? server;
+
+  /// 页面入口 URL (含 session token 路径前缀)，供 WebView 加载。
+  final String? entryUrl;
+
   final String? error;
 
   bool get isRunning => server != null;
 }
 
-/// UI Server 控制器：负责启动/停止 App 内置本地服务器。
+/// UI Server 控制器 (WORK_V2 §12.3 uiRuntimeProvider 的 Phase 8 形态)。
 class UiServerController extends Notifier<UiServerState> {
   @override
   UiServerState build() => const UiServerState();
 
-  /// 以 [session] 为设备通道启动 UI Server，返回是否成功。
-  Future<bool> start(DemoDeviceChannel session) async {
+  /// 以 [client] 启动本地 UI Server (127.0.0.1 随机端口 + session token)。
+  /// [staticRoot] 为 UI 静态目录，Phase 9 起为 UI Package 缓存目录。
+  Future<bool> start(DeviceClient client, {String? staticRoot}) async {
     await stop(); // 先停掉旧服务
     try {
-      final server = UiServer(session);
-      await server.start(port: AppConstants.proxyPort);
-      state = UiServerState(server: server);
+      final server = UiServer(client: client, staticRoot: staticRoot);
+      await server.start();
+      state = UiServerState(server: server, entryUrl: server.entryUrl);
       return true;
     } catch (e) {
-      state = UiServerState(error: e.toString());
+      state = UiServerState(error: '$e');
       return false;
     }
   }

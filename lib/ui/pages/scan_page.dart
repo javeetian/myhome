@@ -3,15 +3,14 @@ import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../device/ble_demo_device_channel.dart';
-import '../../device/demo_device_channel.dart';
-import '../../device/mock_demo_device_channel.dart';
+import '../../device/demo_device.dart';
 import '../../providers/ble_provider.dart';
-import '../../providers/demo_device_session_provider.dart';
+import '../../providers/device_session_provider.dart';
 import '../../providers/ui_runtime_provider.dart';
+import '../../ui_runtime/ui_cache.dart';
 import 'device_page.dart';
 
-/// 设备扫描页：扫描真实 BLE 设备，或使用 Mock 设备演示完整链路。
+/// 设备扫描页：扫描真实 BLE 设备，或使用演示设备跑通完整链路 (无需硬件)。
 class ScanPage extends ConsumerStatefulWidget {
   const ScanPage({super.key});
 
@@ -39,26 +38,59 @@ class _ScanPageState extends ConsumerState<ScanPage> {
     }
   }
 
-  /// 打开设备控制页：切换会话 → 启动 UI Server → 跳转 WebView。
-  Future<void> _openDevice(DemoDeviceChannel session) async {
+  /// 真实设备：连接 → 启动 UI Server → 跳转控制页。
+  Future<void> _openDevice(DiscoveredDevice device) async {
     setState(() => _busy = true);
-    ref.read(demoDeviceSessionControllerProvider.notifier).select(session);
-    final ok =
-        await ref.read(uiServerControllerProvider.notifier).start(session);
+    try {
+      await ref.read(deviceSessionProvider.notifier).connect(device.id);
+      await _startUiServer(device.name.isNotEmpty ? device.name : device.id);
+    } catch (e) {
+      _showSnack('连接失败: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  /// 演示设备 (WORK_V2 §30 硬件到位前的替代)：本进程内脚本设备，
+  /// App 侧仍走完整 DeviceClient → Protocol → Transport 链路。
+  Future<void> _openDemo() async {
+    setState(() => _busy = true);
+    final demo = DemoDevice();
+    try {
+      await ref
+          .read(deviceSessionProvider.notifier)
+          .connect(demo.deviceId, transport: demo);
+      final cache = await UiCache.extract('demo', demo.uiBundleBytes);
+      await _startUiServer(demo.name, staticRoot: cache.rootDir);
+    } catch (e) {
+      _showSnack('演示启动失败: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  /// 启动 UI Server 并跳转设备控制页。
+  Future<void> _startUiServer(String name, {String? staticRoot}) async {
+    final client = ref.read(deviceClientProvider);
+    if (client == null) {
+      throw StateError('设备会话未建立');
+    }
+    final ok = await ref
+        .read(uiServerControllerProvider.notifier)
+        .start(client, staticRoot: staticRoot);
+    if (!ok) {
+      final error = ref.read(uiServerControllerProvider).error;
+      throw StateError('UI Server 启动失败: $error');
+    }
     if (!mounted) {
       return;
     }
-    setState(() => _busy = false);
-    if (!ok) {
-      final error = ref.read(uiServerControllerProvider).error;
-      _showSnack('连接失败: $error');
-      ref.read(demoDeviceSessionControllerProvider.notifier).select(null);
-      return;
-    }
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DevicePage(name: session.name),
-      ),
+      MaterialPageRoute<void>(builder: (_) => DevicePage(name: name)),
     );
   }
 
@@ -105,7 +137,7 @@ class _ScanPageState extends ConsumerState<ScanPage> {
               leading: const Icon(Icons.science),
               title: const Text('Mock 设备演示'),
               subtitle: const Text('无需真实硬件，模拟完整交互链路'),
-              onTap: _busy ? null : () => _openDevice(MockDemoDeviceChannel()),
+              onTap: _busy ? null : _openDemo,
             ),
           ),
           Padding(
@@ -127,7 +159,7 @@ class _ScanPageState extends ConsumerState<ScanPage> {
                 title: Text(_displayName(d)),
                 subtitle: Text('${d.id}  RSSI: ${d.rssi}'),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: _busy ? null : () => _openDevice(BleDemoDeviceChannel(d)),
+                onTap: _busy ? null : () => _openDevice(d),
               ),
             ),
           ),

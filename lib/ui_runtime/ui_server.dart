@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:shelf/shelf.dart';
@@ -8,42 +8,64 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../device/demo_device_channel.dart';
-import 'ui_cache.dart';
+import '../device/device_client.dart';
+import 'ui_adapter.dart';
 
-/// 本地 UI Server：HTTP/WebSocket → [DemoDeviceChannel] (BLE/Mock)。
-/// 即 FRAMEWORK_V2 中的 UI Adapter + Local HTTP Server (§17/§29)。
+/// 本地 UI Server (WORK_V2 §13.1)：Shelf HTTP + WebSocket 服务器。
 ///
-/// 路由：
-///   GET  /            → UI 包 index.html
-///   GET  /<文件>      → UI 包静态资源
-///   POST /api/<路径>  → JSON 指令 → 设备
-///   GET  /ws          → WebSocket (指令下行 + 状态上行)
+/// 安全 (§13.5)：
+///   仅绑定 127.0.0.1；随机端口；随机 session token。
+///   所有路由 (静态 / API / WS) 均挂在 `/s/<token>/` 前缀下 ——
+///   设备页面全部使用相对路径即可自动携带 token，无需感知。
+///   带 Origin 头的请求必须来自本机，否则 403。
+///
+/// 路由 (§13.2)：
+///   `GET  /s/<token>/`                → index.html (Phase 9/10 接 UI Package)
+///   `GET  /s/<token>/<文件>`          → 静态资源
+///   `GET  /s/<token>/api/device`      → 设备信息
+///   `GET  /s/<token>/api/state`       → 当前设备状态
+///   `POST /s/<token>/api/command`     → 指令
+///   `GET  /s/<token>/api/resource/*`  → Phase 10
+///   `GET  /s/<token>/ws`              → WebSocket 推送
 class UiServer {
-  UiServer(this._session);
+  UiServer({required DeviceClient client, String? staticRoot})
+      : _adapter = UiAdapter(client),
+        _staticRoot = staticRoot;
 
-  final DemoDeviceChannel _session;
+  final UiAdapter _adapter;
+
+  /// 静态文件根目录 (Phase 9 起为 UI Package 缓存目录)。
+  final String? _staticRoot;
+
   final Set<WebSocketChannel> _wsClients = <WebSocketChannel>{};
 
   HttpServer? _httpServer;
-  StreamSubscription<Map<String, dynamic>>? _pushSub;
-  String? _bundleRoot;
+  String? _token;
+  StreamSubscription<String>? _pushSub;
 
-  /// 启动：初始化设备通道 → 解压 UI 包 → 监听端口。
-  Future<void> start({required int port}) async {
-    await _session.init();
-    final gz = await _session.readUiBundle();
-    final cache = await UiCache.extract(_session.name, gz);
-    _bundleRoot = cache.rootDir;
+  /// 实际监听端口 (随机端口，启动后可用)。
+  int? get port => _httpServer?.port;
 
-    // 设备推送 → 转发给所有 WebSocket 客户端
-    _pushSub = _session.pushes.listen(_broadcast);
+  /// 页面入口 URL (含 token 路径前缀)，供 WebView 加载。
+  String? get entryUrl {
+    final server = _httpServer;
+    final token = _token;
+    if (server == null || token == null) {
+      return null;
+    }
+    return 'http://127.0.0.1:${server.port}/s/$token/';
+  }
 
+  /// 启动：绑定 127.0.0.1 随机端口，生成 session token (§13.5)。
+  Future<void> start() async {
+    _token = _generateToken();
+    // 设备推送 → 广播给所有 WebSocket 客户端
+    _pushSub = _adapter.pushStream().listen(_broadcast);
     final handler = const Pipeline()
         .addMiddleware(logRequests())
         .addHandler(_router);
     _httpServer =
-        await shelf_io.serve(handler, InternetAddress.loopbackIPv4, port);
+        await shelf_io.serve(handler, InternetAddress.loopbackIPv4, 0);
   }
 
   Future<void> stop() async {
@@ -55,45 +77,12 @@ class UiServer {
     _wsClients.clear();
     await _httpServer?.close(force: true);
     _httpServer = null;
-    _bundleRoot = null;
+    _token = null;
   }
 
-  Future<Response> _router(Request request) async {
-    final path = request.url.path;
-    if (request.method == 'GET' && (path == 'ws' || path == '/ws')) {
-      return _wsHandler(request);
-    }
-    if (path == 'api' || path.startsWith('api/')) {
-      return _handleApi(request);
-    }
-    return _handleStatic(request);
-  }
-
-  Handler get _wsHandler => webSocketHandler(
-        (WebSocketChannel channel, String? protocol) {
-          _wsClients.add(channel);
-          channel.stream.listen(
-            _onWsMessage,
-            onDone: () => _wsClients.remove(channel),
-            onError: (Object _) => _wsClients.remove(channel),
-            cancelOnError: true,
-          );
-        },
-      );
-
-  /// 客户端 (WebView JS) 发来的 WS 消息 → 异步指令下发给设备。
-  Future<void> _onWsMessage(dynamic data) async {
-    try {
-      final command = jsonDecode(data as String) as Map<String, dynamic>;
-      await _session.sendCommand(command, sync: false);
-    } catch (_) {
-      // 单条消息失败不影响连接
-    }
-  }
-
-  /// 设备主动推送 → 广播给所有 WebSocket 客户端。
-  void _broadcast(Map<String, dynamic> push) {
-    final message = jsonEncode(push);
+  /// 设备推送 → 广播给所有 WebSocket 客户端。
+  /// 已关闭的通道在发送失败时惰性移除。
+  void _broadcast(String message) {
     for (final channel in _wsClients.toList()) {
       try {
         channel.sink.add(message);
@@ -103,56 +92,80 @@ class UiServer {
     }
   }
 
-  /// Device API 指令入口：JSON body → 设备 → JSON 响应。
-  Future<Response> _handleApi(Request request) async {
-    final body = await request.readAsString();
-    Map<String, dynamic> command;
-    try {
-      command = jsonDecode(body) as Map<String, dynamic>;
-    } catch (_) {
-      // HTMX 默认以表单编码提交，也兼容一下
-      command = Uri.splitQueryString(body).map(
-        (key, value) => MapEntry(key, value),
-      );
+  static String _generateToken() {
+    final random = Random.secure();
+    return List<String>.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+  }
+
+  Future<Response> _router(Request request) async {
+    final prefix = '/s/$_token';
+    // shelf 的 Request.url.path 是相对路径 (无前导 /)，这里统一归一化
+    final rawPath = request.url.path;
+    final path = rawPath.startsWith('/') ? rawPath : '/$rawPath';
+    if (path != prefix && !path.startsWith('$prefix/')) {
+      return Response.notFound('not found'); // 无 token：404，不泄露细节
     }
-    command.putIfAbsent('id', () => DateTime.now().millisecondsSinceEpoch);
-    final sync = command['mode'] != 'async';
-    try {
-      final result = await _session
-          .sendCommand(command, sync: sync)
-          .timeout(const Duration(seconds: 10));
-      return _json(result);
-    } catch (e) {
-      return _json(<String, dynamic>{
-        'type': 'response',
-        'status': 'error',
-        'error': e.toString(),
-        'id': command['id'],
-      });
+    // Origin 校验 (§13.5)
+    final origin = request.headers['origin'];
+    if (origin != null && !_isLocalOrigin(origin)) {
+      return Response.forbidden('origin not allowed');
+    }
+    final sub = path == prefix ? '' : path.substring(prefix.length + 1);
+    switch (sub) {
+      case 'ws':
+        return _handleWs(request);
+      case 'api/command':
+        return _adapter.handleCommand(request);
+      case 'api/state':
+        return _adapter.handleState(request);
+      case 'api/device':
+        return _adapter.handleDeviceInfo(request);
+      default:
+        if (sub.startsWith('api/resource')) {
+          final resourcePath = sub.length > 'api/resource'.length
+              ? sub.substring('api/resource'.length + 1)
+              : '';
+          return _adapter.handleResource(resourcePath);
+        }
+        return _handleStatic(sub);
     }
   }
 
-  /// 静态文件服务 (UI 包解压目录)。
-  Response _handleStatic(Request request) {
-    final root = _bundleRoot;
+  static bool _isLocalOrigin(String origin) {
+    final host = Uri.tryParse(origin)?.host ?? '';
+    return host == '127.0.0.1' || host == 'localhost' || host == '::1';
+  }
+
+  Handler get _handleWs => webSocketHandler(
+        (WebSocketChannel channel, String? protocol) {
+          // 注意：shelf_web_socket 已消费 channel.stream，
+          // 推送由 _broadcast 统一分发 (见 start)。
+          _wsClients.add(channel);
+        },
+      );
+
+  /// 静态文件服务 (UI 包目录；Phase 9 正式接入)。
+  Response _handleStatic(String rel) {
+    final root = _staticRoot;
     if (root == null) {
-      return Response.notFound('UI bundle not loaded');
+      return Response.notFound('no static root');
     }
-    final rel = (request.url.path.isEmpty || request.url.path == '/')
-        ? 'index.html'
-        : request.url.path.substring(1);
-    final target = p.normalize(p.join(root, rel));
+    final name = rel.isEmpty ? 'index.html' : rel;
+    final target = p.normalize(p.join(root, name));
     // 防目录穿越
     if (target != root && !target.startsWith(root + p.separator)) {
       return Response.forbidden('forbidden');
     }
     final file = File(target);
     if (!file.existsSync()) {
-      return Response.notFound('not found: $rel');
+      return Response.notFound('not found: $name');
     }
     return Response.ok(
       file.readAsBytesSync(),
-      headers: <String, String>{'content-type': _contentType(rel)},
+      headers: <String, String>{'content-type': _contentType(name)},
     );
   }
 
@@ -167,12 +180,4 @@ class UiServer {
     if (rel.endsWith('.woff2')) return 'font/woff2';
     return 'application/octet-stream';
   }
-
-  Response _json(Object data) => Response.ok(
-        jsonEncode(data),
-        headers: <String, String>{
-          'content-type': 'application/json; charset=utf-8',
-          'access-control-allow-origin': '*',
-        },
-      );
 }

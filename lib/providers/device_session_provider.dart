@@ -34,10 +34,16 @@ class DeviceSessionController extends Notifier<DeviceSession> {
   }
 
   /// 连接指定设备：创建 DeviceClient → 建立会话 → 订阅状态与断线。
-  Future<void> connect(String deviceId) async {
+  /// [transport] 可注入 (演示设备 / 测试)；缺省从 [bleTransportProvider] 读取。
+  Future<void> connect(String deviceId, {BleTransport? transport}) async {
     await disconnect();
-    final transport = ref.read(bleTransportProvider);
-    final client = DeviceClient(transport: transport, deviceId: deviceId);
+    final BleTransport resolved;
+    if (transport != null) {
+      resolved = transport;
+    } else {
+      resolved = ref.read(bleTransportProvider);
+    }
+    final client = DeviceClient(transport: resolved, deviceId: deviceId);
     _client = client;
     state = DeviceSession(
       phase: ConnectionPhase.connecting,
@@ -47,7 +53,7 @@ class DeviceSessionController extends Notifier<DeviceSession> {
 
     try {
       await client.connect();
-      _wireSession(client, transport);
+      _wireSession(client, resolved);
       state = state.copyWith(phase: ConnectionPhase.connected, clearError: true);
     } catch (e) {
       _unwire();
