@@ -34,6 +34,12 @@ class FakeBleDevice implements BleTransport {
   /// 未设置时默认回 ok + echo params。
   DeviceResponse? Function(DeviceCommand command)? onCommand;
 
+  /// HELLO 处理器 (Phase 10 §39)。null = 默认回 HELLO_ACK。
+  DeviceHelloAck? Function(DeviceHello hello)? onHello;
+
+  /// 资源处理器 (Phase 10 §27)。null = 默认回 5001 资源不存在。
+  DeviceResourceResponse? Function(DeviceResourceRequest request)? onResource;
+
   /// 是否自动回复命令 (false 时完全不回复，模拟响应丢失)。
   bool autoRespond = true;
 
@@ -76,24 +82,55 @@ class FakeBleDevice implements BleTransport {
       dropMessages--;
       return;
     }
-    // 协议处理：命令 → 脚本化响应 (坏消息忽略，不崩)
-    if (frameType == FrameType.command && autoRespond) {
-      try {
-        final command = _codec.decode(frameType, message) as DeviceCommand;
-        receivedCommands.add(command);
-        final handler = onCommand;
-        final response = handler == null
-            ? DeviceResponse(
-                requestId: command.requestId,
-                data: <String, dynamic>{'echo': command.params},
-              )
-            : handler(command);
-        if (response != null) {
-          sendMessage(FrameType.response, _codec.encode(response));
-        }
-      } on ProtocolException {
-        // 非协议字节 (如 channel 层的裸数据测试)：不回复业务响应
+    // 协议处理 (坏消息忽略，不崩)
+    try {
+      switch (frameType) {
+        case FrameType.command:
+          if (!autoRespond) {
+            break;
+          }
+          final command = _codec.decode(frameType, message) as DeviceCommand;
+          receivedCommands.add(command);
+          final handler = onCommand;
+          final response = handler == null
+              ? DeviceResponse(
+                  requestId: command.requestId,
+                  data: <String, dynamic>{'echo': command.params},
+                )
+              : handler(command);
+          if (response != null) {
+            sendMessage(FrameType.response, _codec.encode(response));
+          }
+        case FrameType.hello:
+          final hello = _codec.decode(frameType, message) as DeviceHello;
+          final handler = onHello;
+          final ack = handler == null
+              ? DeviceHelloAck(
+                  requestId: hello.requestId,
+                  protocolVersion: 1,
+                  deviceType: 'fake',
+                  deviceModel: 'test',
+                  firmwareVersion: '0.0.1',
+                  uiVersion: '0.0.0',
+                )
+              : handler(hello);
+          if (ack != null) {
+            sendMessage(FrameType.helloAck, _codec.encode(ack));
+          }
+        case FrameType.resourceRequest:
+          final request = _codec.decode(frameType, message) as DeviceResourceRequest;
+          final response = onResource?.call(request) ??
+              DeviceResourceResponse(
+                requestId: request.requestId,
+                status: 'error',
+                error: const DeviceError(code: 5001, message: 'resource not found'),
+              );
+          sendMessage(FrameType.resourceResponse, _codec.encode(response));
+        default:
+          break;
       }
+    } on ProtocolException {
+      // 非协议字节 (如 channel 层的裸数据测试)：不回复业务响应
     }
     // 传输层 ACK (所有消息)
     final replyType = nackInstead ? FrameType.nack : FrameType.ack;

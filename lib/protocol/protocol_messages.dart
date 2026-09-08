@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'ble_frame.dart';
 
 /// 协议层异常 (编解码/字段校验失败)。
@@ -109,7 +111,7 @@ class DevicePatch extends ProtocolMessage {
   int get frameType => FrameType.patch;
 }
 
-/// 错误信息 (§10.5)，内嵌于 [DeviceResponse]。
+/// 错误信息 (§10.5)，内嵌于 [DeviceResponse] / [DeviceResourceResponse]。
 class DeviceError {
   const DeviceError({required this.code, required this.message});
 
@@ -120,4 +122,72 @@ class DeviceError {
         'code': code,
         'message': message,
       };
+}
+
+/// HELLO 握手 (App → 设备, WORK_V2 §39/§15.3)。
+/// request_id 用于应用层配对 (与 Transport SEQ 分离, §14)。
+class DeviceHello extends ProtocolMessage {
+  const DeviceHello({required this.requestId, this.protocolVersion = 1});
+
+  final int requestId;
+  final int protocolVersion;
+
+  @override
+  int get frameType => FrameType.hello;
+}
+
+/// HELLO_ACK (设备 → App, §39)：设备能力与 UI 版本声明。
+class DeviceHelloAck extends ProtocolMessage {
+  const DeviceHelloAck({
+    required this.requestId,
+    this.protocolVersion = 1,
+    this.deviceType = '',
+    this.deviceModel = '',
+    this.firmwareVersion = '',
+    this.uiVersion = '',
+    this.capabilities = const <String>[],
+  });
+
+  final int requestId;
+  final int protocolVersion;
+  final String deviceType;
+  final String deviceModel;
+  final String firmwareVersion;
+  final String uiVersion;
+  final List<String> capabilities;
+
+  @override
+  int get frameType => FrameType.helloAck;
+}
+
+/// 资源请求 (App → 设备, §27)：按路径请求 manifest.json / ui.pkg 等。
+class DeviceResourceRequest extends ProtocolMessage {
+  const DeviceResourceRequest({required this.requestId, required this.path});
+
+  final int requestId;
+  final String path;
+
+  @override
+  int get frameType => FrameType.resourceRequest;
+}
+
+/// 资源响应 (设备 → App, §27)。
+/// MVP 数据以 base64 内嵌 JSON (§46 第一阶段)；正式版换二进制编码。
+class DeviceResourceResponse extends ProtocolMessage {
+  const DeviceResourceResponse({
+    required this.requestId,
+    this.status = 'ok',
+    this.data,
+    this.error,
+  });
+
+  final int requestId;
+  final String status;
+  final Uint8List? data;
+  final DeviceError? error;
+
+  bool get isOk => status == 'ok' && error == null;
+
+  @override
+  int get frameType => FrameType.resourceResponse;
 }

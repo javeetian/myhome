@@ -10,6 +10,7 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../device/device_client.dart';
+import '../device/device_manifest.dart';
 import 'js_bridge.dart';
 import 'ui_adapter.dart';
 
@@ -30,10 +31,15 @@ import 'ui_adapter.dart';
 ///   `GET  /s/<token>/api/resource/*`  → Phase 10
 ///   `GET  /s/<token>/ws`              → WebSocket 推送
 class UiServer {
-  UiServer({required DeviceClient client, String? staticRoot})
-      : _adapter = UiAdapter(client),
+  UiServer({
+    required DeviceClient client,
+    String? staticRoot,
+    DeviceManifest? manifest,
+  })  : _client = client,
+        _adapter = UiAdapter(client, manifest: manifest),
         _staticRoot = staticRoot;
 
+  final DeviceClient _client;
   final UiAdapter _adapter;
 
   /// 静态文件根目录 (Phase 9 起为 UI Package 缓存目录)。
@@ -129,15 +135,77 @@ class UiServer {
         if (sub == '__device_api.js') {
           return _serveDeviceApi();
         }
-        if (sub.startsWith('api/resource')) {
+        if (sub == 'api/resource' || sub.startsWith('api/resource/')) {
           final resourcePath = sub.length > 'api/resource'.length
               ? sub.substring('api/resource'.length + 1)
               : '';
-          return _adapter.handleResource(resourcePath);
+          return _handleResource(resourcePath);
         }
         return _handleStatic(sub);
     }
   }
+
+  /// 资源 (WORK_V2 §27)：先查本地缓存，未命中向设备请求并落盘缓存。
+  Future<Response> _handleResource(String resourcePath) async {
+    if (resourcePath.isEmpty) {
+      return _jsonError(404, 5001, '缺少资源路径');
+    }
+    // 1. 本地命中 (UI Package 缓存)
+    final local = _localFile(resourcePath);
+    if (local != null) {
+      return Response.ok(
+        local.readAsBytesSync(),
+        headers: <String, String>{'content-type': _contentType(resourcePath)},
+      );
+    }
+    // 2. 设备回退：RESOURCE_REQUEST → 落盘 → 返回
+    final root = _staticRoot;
+    if (root == null) {
+      return _jsonError(404, 5001, '资源不存在: $resourcePath');
+    }
+    try {
+      final response = await _client.requestResource(resourcePath);
+      if (!response.isOk || response.data == null) {
+        return _jsonError(404, 5001, '资源不存在: $resourcePath');
+      }
+      final target = File(p.normalize(p.join(root, resourcePath)));
+      if (!target.path.startsWith(root + p.separator)) {
+        return Response.forbidden('forbidden');
+      }
+      target.parent.createSync(recursive: true);
+      target.writeAsBytesSync(response.data!);
+      return Response.ok(
+        response.data!,
+        headers: <String, String>{'content-type': _contentType(resourcePath)},
+      );
+    } catch (e) {
+      return _jsonError(500, 5002, '资源下载失败: $e');
+    }
+  }
+
+  /// 静态根目录下的安全文件查找。
+  File? _localFile(String rel) {
+    final root = _staticRoot;
+    if (root == null) {
+      return null;
+    }
+    final target = File(p.normalize(p.join(root, rel)));
+    if (!target.path.startsWith(root + p.separator)) {
+      return null; // 防目录穿越
+    }
+    return target.existsSync() ? target : null;
+  }
+
+  Response _jsonError(int statusCode, int code, String message) => Response(
+        statusCode,
+        body: jsonEncode(<String, dynamic>{
+          'status': 'error',
+          'error': <String, dynamic>{'code': code, 'message': message},
+        }),
+        headers: <String, String>{
+          'content-type': 'application/json; charset=utf-8',
+        },
+      );
 
   /// Device API Runtime 脚本 (Phase 9 §14.3/§14.5)，随页面相对路径引用。
   Response _serveDeviceApi() => Response.ok(

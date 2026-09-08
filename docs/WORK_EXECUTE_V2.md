@@ -33,7 +33,8 @@ Phase 6  DeviceClient          ✅ 完成 (2026-09-08，纯 Dart)
 Phase 7  Riverpod              ✅ 完成 (2026-09-08)
 Phase 8  UI Adapter            ✅ 完成 (2026-09-08)
 Phase 9  WebView Runtime       ✅ 完成 (2026-09-08)
-Phase 10 Manifest / UI Package ⬜ 未开始 (下一目标)
+Phase 10 Manifest / UI Package ✅ 完成 (2026-09-08)
+Phase 11 State / Patch / Event ⬜ 未开始 (下一目标)
 Phase 10 Manifest / UI Package ⬜ 未开始
 Phase 11 State / Patch / Event ⬜ 未开始
 Phase 12 Security / Production ⬜ 未开始
@@ -60,6 +61,10 @@ Phase 12 Security / Production ⬜ 未开始
 16. WebView 加载本地 HTML  ✅ (Phase 9：entryUrl 链路 + Device API Runtime 注入；真机视觉验证待硬件)
 17. HTTP → DeviceClient    ✅ (Phase 8 UiAdapter)
 18. WebSocket → WebView    ✅ (Phase 8 pushStream 单向推送；Phase 9 JS 运行时自动接收)
+19. State / Patch          ⏳ Phase 11 (消息模型已具备，Gap 检测等语义待实现)
+20. Manifest               ✅ (Phase 10：模型 + HELLO 握手 + /api/device 暴露)
+21. UI Package             ✅ (Phase 10：ui.pkg = tar.gz + 完整下载)
+22. UI Cache               ✅ (Phase 10：deviceId+uiVersion 版本化缓存 + SHA256)
 ```
 
 ---
@@ -485,22 +490,79 @@ discovering/negotiating 在 transport 内部尚不可观测；handshaking/loadin
 
 ---
 
-# 13. 下一步：Phase 10 Manifest / UI Package / Cache
+# 14. Phase 10 执行记录 ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（协议 / 打包 / 缓存为纯 Dart + FakeBleDevice 全链路测试）
+
+## 14.1 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/protocol/protocol_messages.dart | §39/§27 | DeviceHello / DeviceHelloAck / DeviceResourceRequest / DeviceResourceResponse |
+| lib/protocol/json_codec.dart | §46 | 新消息编解码（资源二进制 base64 内嵌，MVP JSON 阶段） |
+| lib/protocol/reliable_channel.dart | 修复 | 入站路由补全 0x20-0x23 / 0x30-0x31；send() 支持 frameType |
+| lib/device/device_client.dart | §39/§27 | hello() / requestResource()（request_id 配对 + 超时 + 断线失败）；helloAck 缓存 |
+| lib/device/device_manifest.dart | §15.1/§24 | DeviceManifest 模型 + 协议版本检查 |
+| lib/ui_runtime/ui_package.dart | §15.2 | ui.pkg = tar.gz（固定 mtime，可复现构建） |
+| lib/ui_runtime/ui_cache.dart | §15.4/§15.5 | 版本化缓存 + SHA256/size 校验 + 防目录穿越 |
+| lib/ui_runtime/ui_runtime.dart | §15.3 | manifest → 缓存命中 → 下载 → 校验 → 解包 编排 |
+| lib/ui_runtime/ui_server.dart | §27 | /api/resource 真实实现（本地命中 → 设备回退落盘） |
+| lib/ui_runtime/ui_adapter.dart | §25/§26 | /api/device 返回 HELLO_ACK + manifest 信息 |
+| lib/providers/device_session_provider.dart | §12.6 | handshaking 阶段接入（connect 内 HELLO 握手） |
+| lib/device/demo_device.dart | §15 | 演示设备完整走官方流程（HELLO / RESOURCE / ui.pkg） |
+
+## 14.2 设计决策（固件侧需对齐）
+
+- HELLO / HELLO_ACK 带 request_id（应用层配对，与 Transport SEQ 分离 §14）
+- 资源响应 MVP 用 base64 内嵌 JSON（§46 第一阶段）；正式版换二进制编码
+- manifest.json 经 RESOURCE_REQUEST('manifest.json') 获取；ui.pkg 一次下载整包
+- package{size, sha256} 可选；固件声明则校验（§15.5）
+- ui.pkg 固定 mtime=0：同内容字节确定性，固件可离线计算 sha256
+- 缓存目录 `ui/<deviceId>/<uiVersion>/`；命中直接加载（§15.3）
+
+## 14.3 过程中修复的问题
+
+1. **ReliableChannel 发送方向不带类型**：所有消息以 COMMAND(0x01) 帧发出，HELLO 无法被设备识别。
+   修复：send() 增加 frameType 参数，与 Fragmenter 共享 SEQ 序列（SEQ 仅属 Transport 层 §7.4）
+2. **ReliableChannel 入站路由缺类型**：0x20-0x23 / 0x30-0x31 帧被静默丢弃，HELLO_ACK 无法到达。
+   修复：路由 case 补全（§7.2 决策更新）
+
+## 14.4 测试（新增 35 例，全套 164/164）
+
+| 用例 | 结果 |
+|---|---|
+| HELLO / RESOURCE 消息 round-trip + 缺字段异常 | ✅ 8 |
+| DeviceManifest 解析 / 协议版本检查 | ✅ 7 |
+| ui.pkg 多文件 / 字节确定性 / 空包 | ✅ 3 |
+| UiCache 命中 / 校验失败不污染 / 防穿越 | ✅ 6 |
+| UiRuntime 全流程 / 缓存命中不重复下载 / sha / 协议版本 | ✅ 6 |
+| 会话 HELLO 握手 + 无响应失败 | ✅ 2 |
+| /api/resource 三态 + /api/device manifest 信息 | ✅ 3 |
+
+## 14.5 未完成（待硬件）
+
+- 真机 ui.pkg 大文件传输实测（分片能力已具备）
+- 设备固件侧 manifest / ui.pkg / HELLO 实现（§40）
+
+---
+
+# 15. 下一步：Phase 11 State / Patch / Event
 
 ```text
-目标 (WORK_V2 §15)：
-  manifest.json (protocol / ui_version / device / entry / capabilities)
-  ui.pkg 打包格式 (manifest + index.html + assets, gzip)
-  下载 + SHA256 校验 + UI Cache (deviceId + ui_version 命中, §15.4)
-  /api/resource/<path> 真实实现 (Phase 8 为 501 占位, §27)
-  HELLO / HELLO_ACK (handshaking 阶段接入, §12.6)
+目标 (WORK_V2 §16)：
+  STATE / PATCH / EVENT 完整语义 (§16.1-16.4)
+  state_version Gap 检测 → 缺失触发全量 STATE_REQUEST (§16.5/§16.6)
+  DeviceState (Riverpod) → WebSocket → WebView → JS Store (§16.4)
+  主动拉取 STATE (getState 已有缓存版 → 全量同步版)
+  syncingState 阶段接入 (§12.6)
 ```
 
 可立即开始。
 
 ---
 
-# 14. 执行规则备忘（WORK_V2 §48/§49）
+# 16. 执行规则备忘（WORK_V2 §48/§49）
 
 - 每个 Phase：代码 + 单测 + 真机测试 + 异常测试 + 日志 + 文档（本文件）
 - 建议：Phase 完成后打 tag（如 v0.1-ble），开 feature/ble 分支

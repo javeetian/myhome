@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:shelf/shelf.dart';
 
 import '../device/device_client.dart';
+import '../device/device_manifest.dart';
 import '../protocol/protocol_messages.dart';
 
 /// UI Adapter (WORK_V2 §13.3/§13.4)：HTTP/WS 语义 → [DeviceClient]。
@@ -14,9 +15,12 @@ import '../protocol/protocol_messages.dart';
 /// WebView 只理解 HTTP / WebSocket / JavaScript (§14.3)，
 /// 不知道 BLE 的存在 —— 本类就是这道边界。
 class UiAdapter {
-  UiAdapter(this._client);
+  UiAdapter(this._client, {DeviceManifest? manifest}) : _manifest = manifest;
 
   final DeviceClient _client;
+
+  /// 设备 manifest (§15.1，经 UiRuntime 加载后传入)。
+  final DeviceManifest? _manifest;
 
   /// POST /api/command：JSON {cmd, params} → DeviceClient.command()。
   ///
@@ -66,16 +70,25 @@ class UiAdapter {
     }
   }
 
-  /// GET /api/device：设备基本信息。
-  /// HELLO / Manifest 的完整语义在 Phase 10 接入 (§15.1)。
+  /// GET /api/device：设备基本信息 + manifest (§15.1/§25)。
+  /// HELLO_ACK 字段来自握手结果 (§39)；manifest 经 UiRuntime 加载后提供。
   Response handleDeviceInfo(Request request) => _json(<String, dynamic>{
         'device_id': _client.deviceId,
-        'protocol': 1,
+        'protocol': _client.helloAck?.protocolVersion ?? 1,
         'connected': _client.isConnected,
+        if (_client.helloAck != null) ...<String, dynamic>{
+          'device': <String, dynamic>{
+            'type': _client.helloAck!.deviceType,
+            'model': _client.helloAck!.deviceModel,
+          },
+          'firmware_version': _client.helloAck!.firmwareVersion,
+          'ui_version': _client.helloAck!.uiVersion,
+          'capabilities': _client.helloAck!.capabilities,
+        },
+        if (_manifest != null) ...<String, dynamic>{
+          'entry': _manifest.entry,
+        },
       });
-
-  /// `GET /api/resource/<path>`：设备资源按需下载，Phase 10 实现 (§27)。
-  Response handleResource(String path) => _errorResponse(501, 5001, 'Resource API 未实现 (Phase 10)');
 
   /// WS /ws：设备主动推送 (state/event/patch) → WebView (§14.4)。
   ///

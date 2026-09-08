@@ -128,6 +128,24 @@ void main() {
     expect(device.receivedCommands.single.cmd, 'ping');
   });
 
+  test('connect 完成 HELLO 握手 (Phase 10 §39)', () async {
+    final notifier = container.read(deviceSessionProvider.notifier);
+    await notifier.connect('dev-1');
+
+    final helloAck = container.read(deviceClientProvider)!.helloAck;
+    expect(helloAck, isNotNull);
+    expect(helloAck!.deviceType, 'fake');
+    expect(helloAck.uiVersion, '0.0.0');
+  });
+
+  test('HELLO 无响应 → connect 失败进入 error', () async {
+    device.onHello = (_) => null; // 设备不回 HELLO_ACK
+    final notifier = container.read(deviceSessionProvider.notifier);
+    await notifier.connect('dev-1'); // 内部 hello 超时由 commandTimeout 控制
+
+    expect(container.read(connectionPhaseProvider), ConnectionPhase.error);
+  }, timeout: const Timeout(Duration(seconds: 15)));
+
   test('setPhase: loadingUi → connected (Phase 9 UI 加载)', () async {
     final notifier = container.read(deviceSessionProvider.notifier);
     await notifier.connect('dev-1');

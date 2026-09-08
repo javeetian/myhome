@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
-
 import '../ble/ble_peripheral.dart';
 import '../ble/ble_transport.dart';
 import '../protocol/ble_frame.dart';
@@ -13,13 +11,16 @@ import '../protocol/frame_sequencer.dart';
 import '../protocol/frame_stream_decoder.dart';
 import '../protocol/json_codec.dart';
 import '../protocol/protocol_messages.dart';
+import '../ui_runtime/ui_package.dart';
 
 /// 演示设备 (WORK_V2 §30 硬件到位前的替代)：
 /// 复用本项目自己的协议栈 (解码 / 组装 / 编解码) 模拟一台真实设备 ——
 /// App 的 [DeviceClient] 走完整 BLE 协议链路，只是传输介质是本进程内回环。
 ///
-/// 行为：
-///   led_on / led_off / set_brightness / ping 命令；
+/// Phase 10 起演示设备完整走官方协议流程：
+///   HELLO → HELLO_ACK (设备能力 / UI 版本声明)
+///   RESOURCE_REQUEST manifest.json / ui.pkg → RESOURCE_RESPONSE
+/// 行为：led_on / led_off / set_brightness / ping 命令；
 ///   连接后立即推送初始 STATE；每 5 秒推送一次温度 STATE；
 ///   LED 变化额外发一次 EVENT (led.changed)。
 class DemoDevice implements BleTransport {
@@ -33,6 +34,9 @@ class DemoDevice implements BleTransport {
 
   /// 展示名称。
   final String name;
+
+  /// UI 版本 (缓存键, §15.4)。
+  static const String uiVersion = '1.0.0';
 
   final StreamController<List<int>> _notifications =
       StreamController<List<int>>.broadcast();
@@ -53,21 +57,51 @@ class DemoDevice implements BleTransport {
   double _temperature = 25.0;
   Timer? _timer;
 
-  /// 演示 UI 的 gzip 字节 (ui.html.gz 形态，Phase 10 起为 ui.pkg)。
-  Uint8List get uiBundleBytes => Uint8List.fromList(
-        GZipEncoder().encode(utf8.encode(demoUiHtml)),
-      );
+  Uint8List? _pkgCache;
+
+  /// ui.pkg 字节 (§15.2)：manifest.json + index.html + assets/。
+  Uint8List get _uiPkg => _pkgCache ??= UiPackage.pack(<String, Uint8List>{
+        'manifest.json': Uint8List.fromList(utf8.encode(_manifestJson)),
+        'index.html': Uint8List.fromList(utf8.encode(demoUiHtml)),
+        'assets/icon.svg': Uint8List.fromList(utf8.encode(_iconSvg)),
+      });
+
+  String get _manifestJson => jsonEncode(<String, dynamic>{
+        'protocol': 1,
+        'ui_version': uiVersion,
+        'device': <String, dynamic>{'type': 'light', 'model': 'demo-1'},
+        'entry': 'index.html',
+        'capabilities': <String>['power', 'brightness', 'led', 'temperature'],
+      });
 
   // ---- 设备侧协议行为 ----
 
   void _onMessageAssembled(int msgId, int frameType, List<int> message) {
-    if (frameType == FrameType.command) {
-      try {
-        final command = _codec.decode(frameType, message) as DeviceCommand;
-        _handleCommand(command);
-      } on ProtocolException {
-        // 非协议字节：忽略
-      }
+    switch (frameType) {
+      case FrameType.command:
+        try {
+          final command = _codec.decode(frameType, message) as DeviceCommand;
+          _handleCommand(command);
+        } on ProtocolException {
+          // 非协议字节：忽略
+        }
+      case FrameType.hello:
+        try {
+          final hello = _codec.decode(frameType, message) as DeviceHello;
+          _handleHello(hello);
+        } on ProtocolException {
+          // 坏握手请求：忽略
+        }
+      case FrameType.resourceRequest:
+        try {
+          final request =
+              _codec.decode(frameType, message) as DeviceResourceRequest;
+          _handleResourceRequest(request);
+        } on ProtocolException {
+          // 坏资源请求：忽略
+        }
+      default:
+        break;
     }
     // 传输层 ACK (所有消息)
     _notifications.add(
@@ -79,6 +113,43 @@ class DemoDevice implements BleTransport {
         payload: <int>[msgId >> 8, msgId & 0xFF],
       ).encode(),
     );
+  }
+
+  /// HELLO → HELLO_ACK (§39)：设备能力与 UI 版本声明。
+  void _handleHello(DeviceHello hello) {
+    _sendMessage(
+      FrameType.helloAck,
+      _codec.encode(DeviceHelloAck(
+        requestId: hello.requestId,
+        protocolVersion: 1,
+        deviceType: 'light',
+        deviceModel: 'demo-1',
+        firmwareVersion: '1.0.0',
+        uiVersion: uiVersion,
+        capabilities: const <String>['power', 'brightness', 'led', 'temperature'],
+      )),
+    );
+  }
+
+  /// RESOURCE_REQUEST → RESOURCE_RESPONSE (§27)。
+  void _handleResourceRequest(DeviceResourceRequest request) {
+    final Uint8List? bytes;
+    switch (request.path) {
+      case 'manifest.json':
+        bytes = Uint8List.fromList(utf8.encode(_manifestJson));
+      case 'ui.pkg':
+        bytes = _uiPkg;
+      default:
+        bytes = null;
+    }
+    final response = bytes == null
+        ? DeviceResourceResponse(
+            requestId: request.requestId,
+            status: 'error',
+            error: const DeviceError(code: 5001, message: 'resource not found'),
+          )
+        : DeviceResourceResponse(requestId: request.requestId, data: bytes);
+    _sendMessage(FrameType.resourceResponse, _codec.encode(response));
   }
 
   void _handleCommand(DeviceCommand command) {
@@ -177,6 +248,14 @@ class DemoDevice implements BleTransport {
     await _notifications.close();
   }
 }
+
+/// 演示设备图标 (ui.pkg assets 示例文件)。
+const String _iconSvg = '''
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">
+  <circle cx="16" cy="16" r="14" fill="#3949ab"/>
+  <circle cx="16" cy="16" r="7" fill="#fdd835"/>
+</svg>
+''';
 
 /// 演示设备 UI 页面。
 ///

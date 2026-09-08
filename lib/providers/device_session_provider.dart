@@ -53,6 +53,9 @@ class DeviceSessionController extends Notifier<DeviceSession> {
 
     try {
       await client.connect();
+      // HELLO 握手 (WORK_V2 §15.3/§39)：handshaking → connected
+      state = state.copyWith(phase: ConnectionPhase.handshaking);
+      await client.hello();
       _wireSession(client, resolved);
       state = state.copyWith(phase: ConnectionPhase.connected, clearError: true);
     } catch (e) {

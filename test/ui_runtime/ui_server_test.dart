@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:myhome/device/device_client.dart';
+import 'package:myhome/device/device_manifest.dart';
 import 'package:myhome/protocol/protocol_messages.dart';
 import 'package:myhome/ui_runtime/ui_server.dart';
 
@@ -29,8 +31,9 @@ void main() {
       String? origin,
       String? body,
       bool raw = false,
+      int? port,
     }) async {
-      final url = Uri.parse('http://127.0.0.1:${server.port}$path');
+      final url = Uri.parse('http://127.0.0.1:${port ?? server.port}$path');
       final request = await http.openUrl(method, url);
       if (origin != null) {
         request.headers.set('origin', origin);
@@ -93,6 +96,37 @@ void main() {
         'protocol': 1,
         'connected': true,
       });
+    });
+
+    test('§15.1 /api/device 含 HELLO_ACK 与 manifest 信息', () async {
+      await client.hello();
+      final serverWithManifest = UiServer(
+        client: client,
+        staticRoot: staticRoot.path,
+        manifest: const DeviceManifest(
+          protocol: 1,
+          uiVersion: '1.2.3',
+          deviceType: 'light',
+          deviceModel: 'fake-1',
+          entry: 'index.html',
+          capabilities: <String>['power', 'brightness'],
+        ),
+      );
+      await serverWithManifest.start();
+      addTearDown(serverWithManifest.stop);
+      final token2 = serverWithManifest.entryUrl!
+          .substring(serverWithManifest.entryUrl!.lastIndexOf('/s/') + 3)
+          .replaceAll('/', '');
+      final result =
+          await request('/s/$token2/api/device', port: serverWithManifest.port);
+      expect(result['statusCode'], 200);
+      expect(result['body']['device'], <String, dynamic>{
+        'type': 'fake',
+        'model': 'test',
+      });
+      expect(result['body']['ui_version'], '0.0.0');
+      expect(result['body']['capabilities'], isA<List<dynamic>>());
+      expect(result['body']['entry'], 'index.html');
     });
 
     test('§13.3 POST /api/command → DeviceClient 往返', () async {
@@ -163,9 +197,31 @@ void main() {
       });
     });
 
-    test('§13.2 GET /api/resource → 501 (Phase 10)', () async {
-      final result = await request('/s/$token/api/resource/icon.png');
-      expect(result['statusCode'], 501);
+    test('§27 GET /api/resource：本地缓存命中', () async {
+      File('${staticRoot.path}/icon.png').writeAsBytesSync(<int>[1, 2, 3]);
+      final result = await request('/s/$token/api/resource/icon.png', raw: true);
+      expect(result['statusCode'], 200);
+      expect(result['contentType'], 'image/png');
+      expect(result['body'], <int>[1, 2, 3].map(String.fromCharCode).join());
+    });
+
+    test('§27 GET /api/resource：设备回退下载并落盘缓存', () async {
+      device.onResource = (request) => DeviceResourceResponse(
+            requestId: request.requestId,
+            data: Uint8List.fromList(<int>[9, 8, 7]),
+          );
+      final result = await request('/s/$token/api/resource/extra.bin', raw: true);
+      expect(result['statusCode'], 200);
+      expect(result['body'], <int>[9, 8, 7].map(String.fromCharCode).join());
+      // 已落盘 → 下次本地命中，不再请求设备
+      device.onResource = null;
+      final second = await request('/s/$token/api/resource/extra.bin', raw: true);
+      expect(second['statusCode'], 200);
+    });
+
+    test('§27 GET /api/resource：未命中且设备无资源 → 404 5001', () async {
+      final result = await request('/s/$token/api/resource/missing.bin');
+      expect(result['statusCode'], 404);
       expect(result['body']['error']['code'], 5001);
     });
 

@@ -8,7 +8,6 @@ import '../../device/demo_device.dart';
 import '../../providers/ble_provider.dart';
 import '../../providers/device_session_provider.dart';
 import '../../providers/ui_runtime_provider.dart';
-import '../../ui_runtime/ui_cache.dart';
 import 'device_page.dart';
 
 /// 设备扫描页：扫描真实 BLE 设备，或使用演示设备跑通完整链路 (无需硬件)。
@@ -55,7 +54,8 @@ class _ScanPageState extends ConsumerState<ScanPage> {
   }
 
   /// 演示设备 (WORK_V2 §30 硬件到位前的替代)：本进程内脚本设备，
-  /// App 侧仍走完整 DeviceClient → Protocol → Transport 链路。
+  /// App 侧走完整 DeviceClient → Protocol → Transport 链路，
+  /// UI 走完整 Phase 10 流程 (manifest → 下载 ui.pkg → 缓存)。
   Future<void> _openDemo() async {
     setState(() => _busy = true);
     final demo = DemoDevice();
@@ -63,8 +63,7 @@ class _ScanPageState extends ConsumerState<ScanPage> {
       await ref
           .read(deviceSessionProvider.notifier)
           .connect(demo.deviceId, transport: demo);
-      final cache = await UiCache.extract('demo', demo.uiBundleBytes);
-      await _startUiServer(demo.name, staticRoot: cache.rootDir);
+      await _startUiServer(demo.name);
     } catch (e) {
       _showSnack('演示启动失败: $e');
     } finally {
@@ -75,14 +74,13 @@ class _ScanPageState extends ConsumerState<ScanPage> {
   }
 
   /// 启动 UI Server 并跳转设备控制页。
-  Future<void> _startUiServer(String name, {String? staticRoot}) async {
+  /// UI 静态目录由 UiRuntime 解析 (Phase 10：manifest → 缓存 → 下载)。
+  Future<void> _startUiServer(String name) async {
     final client = ref.read(deviceClientProvider);
     if (client == null) {
       throw StateError('设备会话未建立');
     }
-    final ok = await ref
-        .read(uiServerControllerProvider.notifier)
-        .start(client, staticRoot: staticRoot);
+    final ok = await ref.read(uiServerControllerProvider.notifier).start(client);
     if (!ok) {
       final error = ref.read(uiServerControllerProvider).error;
       throw StateError('UI Server 启动失败: $error');

@@ -99,11 +99,23 @@ class ReliableChannel {
 
   /// 入队发送一条消息，返回分配的 MSG_ID。
   ///
+  /// [frameType] 为数据帧 TYPE (§10.1)。不同类型消息 (命令 / 握手 / 资源)
+  /// 共享同一 SEQ 序列 —— SEQ 仅属 Transport 层 (§7.4)。
+  ///
   /// 消息按 FIFO 串行发送 (Window=1)：前一条未收到 ACK / 未失败前，
   /// 后续消息不会写入 BLE (§9.5)。
-  Future<int> send(List<int> message, {int? msgId}) async {
+  Future<int> send(
+    List<int> message, {
+    int? msgId,
+    int frameType = FrameType.command,
+  }) async {
     final id = msgId ?? (_nextMsgId++ & 0xFFFF);
-    final pending = _PendingSend(id, fragmenter.fragment(id, message));
+    final typedFragmenter = Fragmenter(
+      mtu: fragmenter.mtu,
+      frameType: frameType,
+      sequencer: fragmenter.sequencer,
+    );
+    final pending = _PendingSend(id, typedFragmenter.fragment(id, message));
     _queue.add(pending);
     _pump();
     return pending.completer.future;
@@ -150,7 +162,13 @@ class ReliableChannel {
             FrameType.response ||
             FrameType.event ||
             FrameType.state ||
-            FrameType.patch:
+            FrameType.patch ||
+            FrameType.hello ||
+            FrameType.helloAck ||
+            FrameType.ping ||
+            FrameType.pong ||
+            FrameType.resourceRequest ||
+            FrameType.resourceResponse:
         _assembler.add(frame);
     }
   }

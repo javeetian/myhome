@@ -31,6 +31,7 @@ class DeviceClient {
     Duration ackTimeout = const Duration(seconds: 2),
     Duration assembleTimeout = const Duration(seconds: 5),
     this.commandTimeout = const Duration(seconds: 8),
+    this.resourceTimeout = const Duration(seconds: 60),
   })  : _deviceId = deviceId,
         _codec = codec,
         _channel = ReliableChannel(
@@ -52,8 +53,14 @@ class DeviceClient {
   /// 设备标识 (UI Adapter 的 /api/device 使用)。
   String get deviceId => _deviceId;
 
+  /// 最近一次 HELLO_ACK (握手结果, §39)。
+  DeviceHelloAck? get helloAck => _helloAck;
+
   /// 命令响应超时 (设备 ACK 后迟迟不回业务响应)。
   final Duration commandTimeout;
+
+  /// 资源下载超时 (ui.pkg 可能较大, §27)。
+  final Duration resourceTimeout;
 
   final Map<int, Completer<DeviceResponse>> _pending =
       <int, Completer<DeviceResponse>>{};
@@ -64,9 +71,16 @@ class DeviceClient {
   final StreamController<DeviceState> _states =
       StreamController<DeviceState>.broadcast();
 
+  /// 进行中的握手 (MVP 同一时刻只允许一次, §39)。
+  Completer<DeviceHelloAck>? _helloPending;
+
+  /// 进行中的资源请求 (大文件串行, §27)。
+  Completer<DeviceResourceResponse>? _resourcePending;
+
   int _nextRequestId = 1;
   bool _connected = false;
   DeviceState? _currentState;
+  DeviceHelloAck? _helloAck;
 
   /// 设备事件流 (§10.4)。
   Stream<DeviceEvent> get events => _events.stream;
@@ -124,10 +138,78 @@ class DeviceClient {
         if (!_states.isClosed) {
           _states.add(state);
         }
+      case DeviceHelloAck ack:
+        final pending = _helloPending;
+        if (pending != null && !pending.isCompleted) {
+          _helloPending = null;
+          _helloAck = ack;
+          pending.complete(ack);
+        }
+      case DeviceResourceResponse response:
+        final pending = _resourcePending;
+        if (pending != null && !pending.isCompleted) {
+          _resourcePending = null;
+          pending.complete(response);
+        }
       case DeviceCommand _:
-        // 设备不应主动发命令 (MVP 忽略)
+      case DeviceHello _:
+      case DeviceResourceRequest _:
+        // 设备不应主动发这些消息 (MVP 忽略)
         break;
     }
+  }
+
+  /// HELLO 握手 (§39/§15.3)：返回设备 HELLO_ACK。
+  Future<DeviceHelloAck> hello() async {
+    if (!_connected) {
+      throw StateError('未连接');
+    }
+    final requestId = _nextRequestId++;
+    final completer = Completer<DeviceHelloAck>();
+    _helloPending = completer;
+    final message = DeviceHello(requestId: requestId);
+    try {
+      await _channel.send(
+        _codec.encode(message),
+        frameType: message.frameType,
+      );
+    } catch (_) {
+      _helloPending = null;
+      rethrow;
+    }
+    return completer.future.timeout(
+      commandTimeout,
+      onTimeout: () {
+        throw TimeoutException('HELLO 握手超时 (request_id=$requestId)');
+      },
+    );
+  }
+
+  /// 请求设备资源 (§27)：如 manifest.json / ui.pkg。
+  /// MVP 同一时刻只允许一个资源请求 (大文件串行)。
+  Future<DeviceResourceResponse> requestResource(String path) async {
+    if (!_connected) {
+      throw StateError('未连接');
+    }
+    final requestId = _nextRequestId++;
+    final completer = Completer<DeviceResourceResponse>();
+    _resourcePending = completer;
+    final message = DeviceResourceRequest(requestId: requestId, path: path);
+    try {
+      await _channel.send(
+        _codec.encode(message),
+        frameType: message.frameType,
+      );
+    } catch (_) {
+      _resourcePending = null;
+      rethrow;
+    }
+    return completer.future.timeout(
+      resourceTimeout,
+      onTimeout: () {
+        throw TimeoutException('资源下载超时 ($path, request_id=$requestId)');
+      },
+    );
   }
 
   /// 发送命令并等待业务响应 (§11.1)。
@@ -174,6 +256,16 @@ class DeviceClient {
       }
     }
     _pending.clear();
+    final hello = _helloPending;
+    if (hello != null && !hello.isCompleted) {
+      _helloPending = null;
+      hello.completeError(error);
+    }
+    final resource = _resourcePending;
+    if (resource != null && !resource.isCompleted) {
+      _resourcePending = null;
+      resource.completeError(error);
+    }
   }
 
   /// 释放全部资源。
