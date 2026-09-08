@@ -196,42 +196,106 @@ class StudioController extends Notifier<StudioState> {
   /// Smart Light ui.pkg 构建产物路径。
   static String smartLightPkgPath = 'devices/smart_light/build/ui.pkg';
 
-  /// 加载 Smart Light UI 包：优先构建产物；不存在则从源目录现场打包。
-  /// 返回 null = 无 UI (纯协议调试模式)。
-  Future<Uint8List?> loadSmartLightPkg() async {
-    final pkgFile = File(smartLightPkgPath);
-    if (pkgFile.existsSync()) {
-      return Uint8List.fromList(pkgFile.readAsBytesSync());
+  /// 项目根目录缓存 (解析结果不变)。
+  static Directory? _projectRoot;
+
+  /// 解析项目内路径，不依赖进程 CWD。
+  ///
+  /// macOS 沙箱应用的 CWD 是容器目录 (非项目根)，Windows 的 CWD 是项目根；
+  /// 统一策略：绝对路径直接返回；相对路径先在 CWD 下找，找不到则从
+  /// 可执行文件位置向上找项目根 (pubspec.yaml + devices/ 标记)。
+  /// [exeDir]/[cwd] 仅测试注入。
+  static String resolvePath(
+    String path, {
+    Directory? exeDir,
+    Directory? cwd,
+  }) {
+    if (p.isAbsolute(path)) {
+      return path;
     }
-    final uiDir = Directory(smartLightUiDir);
-    if (!uiDir.existsSync()) {
-      return null;
+    final directBase = (cwd ?? Directory.current).path;
+    final direct = p.join(directBase, path);
+    if (File(direct).existsSync() || Directory(direct).existsSync()) {
+      return direct; // CWD 即项目根 (Windows 场景)
     }
-    final files = <String, Uint8List>{};
-    for (final entity in uiDir.listSync(recursive: true)) {
-      if (entity is! File) {
-        continue;
+    final root = (exeDir != null || cwd != null)
+        ? _findProjectRoot(exeDir: exeDir, cwd: cwd) // 测试注入：不用缓存
+        : _projectRoot ??= _findProjectRoot(exeDir: exeDir, cwd: cwd);
+    if (root != null) {
+      return p.join(root.path, path);
+    }
+    return direct; // 兜底：保持原行为
+  }
+
+  static Directory? _findProjectRoot({Directory? exeDir, Directory? cwd}) {
+    final starts = <Directory>[
+      ?exeDir,
+      File(Platform.resolvedExecutable).parent,
+      ?cwd,
+      Directory.current,
+    ];
+    for (final start in starts) {
+      var dir = start;
+      while (true) {
+        if (File(p.join(dir.path, 'pubspec.yaml')).existsSync() &&
+            Directory(p.join(dir.path, 'devices')).existsSync()) {
+          return dir;
+        }
+        final parent = dir.parent;
+        if (parent.path == dir.path) {
+          break; // 到达文件系统根
+        }
+        dir = parent;
       }
-      final rel = p
-          .relative(entity.path, from: uiDir.path)
-          .replaceAll('\\', '/');
-      files[rel] = Uint8List.fromList(entity.readAsBytesSync());
     }
-    if (!files.containsKey('manifest.json')) {
+    return null;
+  }
+
+  /// 加载 Smart Light UI 包：优先构建产物；不存在则从源目录现场打包。
+  /// 返回 null = 无 UI (纯协议调试模式)。文件访问失败同样返回 null，
+  /// 由无 UI 提示页兜底，不让异常打穿启动流程。
+  Future<Uint8List?> loadSmartLightPkg() async {
+    try {
+      final pkgPath = resolvePath(smartLightPkgPath);
+      final uiDirPath = resolvePath(smartLightUiDir);
+      final pkgFile = File(pkgPath);
+      if (pkgFile.existsSync()) {
+        return Uint8List.fromList(pkgFile.readAsBytesSync());
+      }
+      final uiDir = Directory(uiDirPath);
+      if (!uiDir.existsSync()) {
+        return null;
+      }
+      final files = <String, Uint8List>{};
+      for (final entity in uiDir.listSync(recursive: true)) {
+        if (entity is! File) {
+          continue;
+        }
+        final rel = p
+            .relative(entity.path, from: uiDir.path)
+            .replaceAll('\\', '/');
+        files[rel] = Uint8List.fromList(entity.readAsBytesSync());
+      }
+      if (!files.containsKey('manifest.json')) {
+        return null;
+      }
+      final pkg = UiPackage.pack(files);
+      pkgFile.parent.createSync(recursive: true);
+      pkgFile.writeAsBytesSync(pkg);
+      _appendLog('INFO UI 从源目录现场打包 (${files.length} 文件)');
+      return pkg;
+    } catch (e) {
+      _appendLog('WARN UI 包加载失败: $e');
       return null;
     }
-    final pkg = UiPackage.pack(files);
-    pkgFile.parent.createSync(recursive: true);
-    pkgFile.writeAsBytesSync(pkg);
-    _appendLog('INFO UI 从源目录现场打包 (${files.length} 文件)');
-    return pkg;
   }
 
   /// UI Hot Reload (Phase 37)：监听 UI 源目录 → 自动重打包 → 重载 WebView。
   void startUiWatch(String sourceDir, String outPkg) {
     stopUiWatch();
-    _uiWatchDir = sourceDir;
-    _uiWatchOut = outPkg;
+    // 路径解析：macOS 沙箱 CWD 非项目根 (与 loadSmartLightPkg 一致)
+    _uiWatchDir = resolvePath(sourceDir);
+    _uiWatchOut = resolvePath(outPkg);
     try {
       _uiWatchSub = Directory(sourceDir).watch(recursive: true).listen((_) {
         _uiDebounce?.cancel();

@@ -212,6 +212,56 @@ void main() {
       '<html>v2</html>',
     );
   });
+  group('resolvePath (macOS 沙箱 CWD 场景)', () {
+    late Directory project; // 模拟项目根
+    late Directory sandbox; // 模拟 macOS 沙箱容器 CWD
+    late Directory appBundle; // 模拟 .app 内可执行文件目录
+
+    setUp(() {
+      project = Directory.systemTemp.createTempSync('myhome_project_');
+      sandbox = Directory.systemTemp.createTempSync('myhome_sandbox_');
+      appBundle = Directory(
+          '${project.path}/build/macos/Build/Products/Debug/myhome.app/Contents/MacOS')
+        ..createSync(recursive: true);
+      File('${project.path}/pubspec.yaml').writeAsStringSync('name: myhome');
+      Directory('${project.path}/devices/smart_light/ui')
+          .createSync(recursive: true);
+      File('${project.path}/devices/smart_light/ui/manifest.json')
+          .writeAsStringSync('{}');
+    });
+
+    tearDown(() {
+      project.deleteSync(recursive: true);
+      sandbox.deleteSync(recursive: true);
+    });
+
+    test('相对路径：CWD 命中时直接用 (Windows 场景)', () {
+      final resolved = StudioController.resolvePath(
+        'devices/smart_light/ui',
+        exeDir: appBundle,
+        cwd: project, // CWD 即项目根
+      );
+      expect(resolved, '${project.path}/devices/smart_light/ui');
+    });
+
+    test('相对路径：CWD 是沙箱容器 → 从可执行文件向上找到项目根 (macOS)', () {
+      final resolved = StudioController.resolvePath(
+        'devices/smart_light/ui',
+        exeDir: appBundle,
+        cwd: sandbox, // macOS 沙箱 CWD ≠ 项目根
+      );
+      expect(resolved, '${project.path}/devices/smart_light/ui');
+    });
+
+    test('绝对路径直接返回 (测试注入场景)', () {
+      final resolved = StudioController.resolvePath(
+        '${sandbox.path}/ui',
+        exeDir: appBundle,
+        cwd: sandbox,
+      );
+      expect(resolved, '${sandbox.path}/ui');
+    });
+  });
 }
 
 Uint8List uiPkgFrom(Directory dir) {

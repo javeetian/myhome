@@ -223,6 +223,16 @@ class UiServer {
     return host == '127.0.0.1' || host == 'localhost' || host == '::1';
   }
 
+  /// 设备无 UI 包时的提示页 (纯协议调试模式)。
+  static const String _noUiHtml = '''
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>无 UI</title></head>
+<body style="font-family: sans-serif; padding: 24px; color: #555;">
+  <h2>该设备未提供 UI 包</h2>
+  <p>当前为纯协议调试模式：Protocol Console 与 Inspector 仍可正常使用。</p>
+</body></html>
+''';
+
   Handler get _handleWs => webSocketHandler(
         (WebSocketChannel channel, String? protocol) {
           // 注意：shelf_web_socket 已消费 channel.stream，
@@ -235,6 +245,13 @@ class UiServer {
   Response _handleStatic(String rel) {
     final root = _staticRoot;
     if (root == null) {
+      // 设备无 UI 包 (纯协议调试模式)：根路径给友好提示页而非空白 404
+      if (rel.isEmpty) {
+        return Response.ok(
+          _noUiHtml,
+          headers: <String, String>{'content-type': 'text/html; charset=utf-8'},
+        );
+      }
       return Response.notFound('no static root');
     }
     final name = rel.isEmpty ? 'index.html' : rel;
