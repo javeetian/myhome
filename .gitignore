@@ -46,3 +46,7 @@ app.*.map.json
 
 # Android Gradle build output
 /android/build/
+
+# C SDK build artifacts (V3 Phase 26)
+*.exe
+*.obj

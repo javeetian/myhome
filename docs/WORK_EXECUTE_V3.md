@@ -54,8 +54,8 @@ Phase 22 Reconnect                                    ✅ 完成 (2026-09-08)
 Phase 23 State / Patch                                ✅ 复用 V2 (回归通过)
 Phase 24 Command Queue (Replaceable)                  ✅ 完成 (2026-09-08)
 Phase 25 Code Generator                               ✅ 完成 (2026-09-08)
-Phase 26 C Device SDK                                 ⬜
-Phase 27 Hardware Adapter                             ⬜
+Phase 26 C Device SDK                                 ✅ 完成 (2026-09-08)
+Phase 27 Hardware Adapter                             ✅ 完成 (2026-09-08)
 Phase 28 真实设备                                      ⏸ 待硬件
 Phase 29 BLE Transport                                ✅ 复用 V2
 Phase 30 Simulator/Real 一致性测试                     ⏸ 待硬件
@@ -374,5 +374,49 @@ generated/
 - 全套测试 254/254（新增 7 例：产物齐全/C 原型/C 路由校验/C 状态/Dart API/Simulator/manifest）
 - CLI 实测：`device generate devices/smart_light/device.yaml` → 6 文件落盘
 - 生成产物可从设备 SDK 直接拷贝编译（§48 流程）
+
+---
+
+## Phase 26-27 — C Device SDK + Hardware Adapter ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无（MSVC 本地编译 + 运行验证）
+
+### 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| sdk/device/core/protocol/crc16.h/.c | §30 | CRC16/CCITT-FALSE，与 Dart 字节级一致 |
+| sdk/device/core/protocol/ble_frame.h/.c | §30 | Frame 编解码 (7B 头大端 + CRC16) + 全帧类型注册表宏 |
+| sdk/device/core/codec/device_json.h/.c | §45 契约 | device_json_get_* 参数提取 (生成代码的 SDK 依赖) |
+| sdk/device/hardware/hardware_adapter.h | §27/§31 | Hardware Adapter 函数指针结构体 (与 Dart VirtualHardware 一一对应) |
+| sdk/device/test/test_c_sdk.c | §34 | 一致性测试 (golden 向量) |
+| devices/smart_light/device_app.c | §45 | Smart Light 开发者代码示例 (硬件实现) |
+| sdk/device/README.md | §43 | 目录说明 + 一致性契约 + 移植流程 |
+
+### 关键设计：golden 向量一致性验证 (§34 的 PC 侧形态)
+
+C 与 Dart 双实现**字节级一致**是 §4 核心原则的底线。验证方式：
+1. Dart 实现生成 golden 向量（CRC 锚点 + 完整帧 hex）
+2. C 测试硬编码向量 → MSVC 编译运行比对
+
+**实测结果（11/11 ALL PASS）**：
+- CRC 锚点 "123456789" → 0x29B1 一致
+- Frame encode 与 Dart golden **逐字节一致**（0101000064000568656c6c6f5d73）
+- 解码往返 / CRC 错误检测 / 长度校验 / JSON 提取契约 6 项
+
+### 移植流程（§48/§54，已写入 sdk/device/README.md）
+
+```text
+device generate → 拷贝 generated/c/ + sdk core/hardware 到设备 SDK
+→ 开发者写 device_app.c (实现 g_hardware 硬件函数)
+→ MCU 编译 (main.c/BLE driver/RTOS/HAL 由设备 SDK 提供, §42)
+→ ui.pkg 烧入 SPIFFS
+```
+
+### 遗留
+
+- fragment / transport / platform 目录按 §43 规划，随真实设备移植逐模块补充
+- 真实 MCU 联调待硬件（§28-30）
 
 ---
