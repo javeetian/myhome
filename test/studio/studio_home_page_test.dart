@@ -115,6 +115,63 @@ events: []
     expect(find.text('打开设备目录'), findsOneWidget);
   });
 
+  testWidgets('打开设备目录：选择器选中目录 → 设备加入列表', (tester) async {
+    // 外部设备目录 fixture
+    final external = Directory.systemTemp.createTempSync('external_dev_');
+    File(p.join(external.path, 'device.yaml')).writeAsStringSync('''
+device:
+  id: ext_light
+  name: Ext Light
+  model: E1
+
+protocol:
+  version: 1
+
+api:
+  version: 1
+
+state: {}
+
+commands: []
+
+events: []
+''');
+    addTearDown(() => external.deleteSync(recursive: true));
+
+    String? picked;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          deviceListProvider.overrideWith(
+            () => DeviceListController(
+              devicesRoot: root,
+              picker: () async => picked,
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: StudioHomePage()),
+      ),
+    );
+
+    // 取消场景：选择器返回 null → 列表无变化
+    picked = null;
+    await tester.tap(find.byIcon(Icons.more_vert).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('打开设备目录'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ext Light'), findsNothing);
+
+    // 选中场景：设备出现在列表
+    picked = external.path;
+    await tester.tap(find.byIcon(Icons.more_vert).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('打开设备目录'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ext Light'), findsOneWidget);
+    expect(find.text('E1 · ext_dev'), findsNothing); // 外部目录副标题是 basename
+  });
+
   testWidgets('新建设备：弹窗填写 → devices/<id>/device.yaml 生成 + 列表刷新', (tester) async {
     await tester.pumpWidget(buildApp());
 

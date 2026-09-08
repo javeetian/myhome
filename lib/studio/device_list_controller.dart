@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
@@ -33,19 +35,21 @@ class DeviceDirInfo {
   bool get hasSimulator => definition?.id == 'smart_light';
 }
 
-/// 设备列表控制器：扫描 devices/ 目录，支持移除/删除/新建/打开。
+/// 设备列表控制器：扫描 devices/ 目录，支持移除/删除/新建/导入。
 ///
 /// 移除 = 在设备目录写入 `.removed` 标记 (目录保留)；
-/// 删除 = 移除列表并递归删除设备目录 (不可恢复)。
+/// 删除 = 移除列表并递归删除设备目录 (不可恢复)；
+/// 导入 = 目录选择器选中设备目录后加入列表 (devices/ 内恢复显示，
+/// devices/ 外记入 `.studio_imports.json` 持久化)。
 class DeviceListController extends Notifier<List<DeviceDirInfo>> {
-  DeviceListController({Directory? devicesRoot, this.opener})
+  DeviceListController({Directory? devicesRoot, this.picker})
       : _rootOverride = devicesRoot;
 
   /// 测试注入设备根目录 (生产用 resolvePath 定位项目 devices/)。
   final Directory? _rootOverride;
 
-  /// 打开目录的系统命令 (测试可注入)。
-  final Future<void> Function(String path)? opener;
+  /// 目录选择器 (测试可注入；默认 file_picker 原生目录选择)。
+  final Future<String?> Function()? picker;
 
   Directory get _root =>
       _rootOverride ?? Directory(StudioController.resolvePath('devices'));
@@ -53,50 +57,105 @@ class DeviceListController extends Notifier<List<DeviceDirInfo>> {
   /// `.removed` 标记文件名。
   static const String removedMarker = '.removed';
 
+  /// 外部导入目录持久化文件名 (devices/ 根下)。
+  static const String importsFileName = '.studio_imports.json';
+
+  /// 外部导入的设备目录绝对路径。
+  final List<String> _imports = <String>[];
+
   @override
-  List<DeviceDirInfo> build() => _scan();
+  List<DeviceDirInfo> build() {
+    _loadImports();
+    return _scan();
+  }
 
   /// 重新扫描并刷新列表。
   void refresh() => state = _scan();
 
-  List<DeviceDirInfo> _scan() {
-    if (!_root.existsSync()) {
-      return const <DeviceDirInfo>[];
+  void _loadImports() {
+    _imports.clear();
+    final file = File(p.join(_root.path, importsFileName));
+    if (!file.existsSync()) {
+      return;
     }
+    try {
+      final data = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      final list = data['imports'];
+      if (list is List) {
+        for (final item in list) {
+          // 目录已不存在的不再显示
+          if (item is String && Directory(item).existsSync()) {
+            _imports.add(item);
+          }
+        }
+      }
+    } catch (_) {
+      // 坏导入文件：忽略
+    }
+  }
+
+  void _saveImports() {
+    final root = Directory(_root.path);
+    if (!root.existsSync()) {
+      root.createSync(recursive: true);
+    }
+    File(p.join(_root.path, importsFileName)).writeAsStringSync(
+      jsonEncode(<String, dynamic>{'imports': _imports}),
+    );
+  }
+
+  List<DeviceDirInfo> _scan() {
     final result = <DeviceDirInfo>[];
-    for (final entity in _root.listSync()) {
-      if (entity is! Directory) {
+    if (_root.existsSync()) {
+      for (final entity in _root.listSync()) {
+        if (entity is! Directory) {
+          continue;
+        }
+        // 移除标记：保留目录但不显示
+        if (File(p.join(entity.path, removedMarker)).existsSync()) {
+          continue;
+        }
+        final info = _readDir(entity.path);
+        if (info != null) {
+          result.add(info);
+        }
+      }
+    }
+    // 外部导入目录
+    final seen = result.map((i) => i.dirPath).toSet();
+    for (final dirPath in _imports) {
+      if (File(p.join(dirPath, removedMarker)).existsSync()) {
         continue;
       }
-      // 移除标记：保留目录但不显示
-      if (File(p.join(entity.path, removedMarker)).existsSync()) {
-        continue;
-      }
-      final yamlFile = File(p.join(entity.path, 'device.yaml'));
-      if (!yamlFile.existsSync()) {
-        continue; // 无 device.yaml 的目录不算设备
-      }
-      final dirName = p.basename(entity.path);
-      try {
-        result.add(
-          DeviceDirInfo(
-            dirName: dirName,
-            dirPath: entity.path,
-            definition: DeviceDefinition.fromYaml(yamlFile.readAsStringSync()),
-          ),
-        );
-      } on DeviceDefinitionException catch (e) {
-        result.add(
-          DeviceDirInfo(
-            dirName: dirName,
-            dirPath: entity.path,
-            error: e.errors.join('; '),
-          ),
-        );
+      final info = _readDir(dirPath);
+      if (info != null && seen.add(info.dirPath)) {
+        result.add(info);
       }
     }
     result.sort((a, b) => a.dirName.compareTo(b.dirName));
     return result;
+  }
+
+  /// 读取设备目录信息；无 device.yaml 返回 null。
+  DeviceDirInfo? _readDir(String dirPath) {
+    final yamlFile = File(p.join(dirPath, 'device.yaml'));
+    if (!yamlFile.existsSync()) {
+      return null; // 无 device.yaml 的目录不算设备
+    }
+    final dirName = p.basename(dirPath);
+    try {
+      return DeviceDirInfo(
+        dirName: dirName,
+        dirPath: dirPath,
+        definition: DeviceDefinition.fromYaml(yamlFile.readAsStringSync()),
+      );
+    } on DeviceDefinitionException catch (e) {
+      return DeviceDirInfo(
+        dirName: dirName,
+        dirPath: dirPath,
+        error: e.errors.join('; '),
+      );
+    }
   }
 
   /// 从列表移除 (写入 .removed 标记，目录保留)。
@@ -108,6 +167,8 @@ class DeviceListController extends Notifier<List<DeviceDirInfo>> {
   /// 从列表移除并删除设备目录 (不可恢复)。
   void delete(DeviceDirInfo info) {
     Directory(info.dirPath).deleteSync(recursive: true);
+    _imports.remove(info.dirPath);
+    _saveImports();
     refresh();
   }
 
@@ -136,37 +197,38 @@ class DeviceListController extends Notifier<List<DeviceDirInfo>> {
     }
   }
 
-  /// 全部设备目录 (含被移除的，供"打开"选择)。
-  List<String> allDeviceDirs() {
-    if (!_root.existsSync()) {
-      return const <String>[];
+  /// 弹出目录选择器并导入所选设备目录。
+  /// 返回 null = 成功或用户取消；非 null = 错误消息。
+  Future<String?> pickAndImport() async {
+    final pick = picker ?? () => FilePicker.getDirectoryPath();
+    final dir = await pick();
+    if (dir == null || dir.isEmpty) {
+      return null; // 用户取消
     }
-    final result = <String>[];
-    for (final entity in _root.listSync()) {
-      if (entity is! Directory) {
-        continue;
-      }
-      if (File(p.join(entity.path, 'device.yaml')).existsSync()) {
-        result.add(entity.path);
-      }
-    }
-    result.sort();
-    return result;
+    return importDevice(dir);
   }
 
-  /// 在系统文件管理器中打开目录。
-  Future<void> openDir(String dirPath) async {
-    if (opener != null) {
-      await opener!(dirPath);
-      return;
+  /// 导入设备目录：devices/ 内 → 恢复显示 (删除 .removed 标记)；
+  /// devices/ 外 → 记入导入列表并持久化。返回 null = 成功。
+  String? importDevice(String dirPath) {
+    if (!Directory(dirPath).existsSync() ||
+        !File(p.join(dirPath, 'device.yaml')).existsSync()) {
+      return '所选目录不含 device.yaml，不是设备目录';
     }
-    if (Platform.isMacOS) {
-      await Process.run('open', <String>[dirPath]);
-    } else if (Platform.isWindows) {
-      await Process.run('explorer', <String>[dirPath]);
-    } else {
-      await Process.run('xdg-open', <String>[dirPath]);
+    final rel = p.relative(dirPath, from: _root.path);
+    final insideRoot = rel != '..' && !rel.startsWith('..${p.separator}');
+    if (insideRoot) {
+      // 恢复显示：删除 .removed 标记
+      final marker = File(p.join(dirPath, removedMarker));
+      if (marker.existsSync()) {
+        marker.deleteSync();
+      }
+    } else if (!_imports.contains(dirPath)) {
+      _imports.add(dirPath);
+      _saveImports();
     }
+    refresh();
+    return null;
   }
 
   /// device.yaml 骨架 (新建时写入，后续由代码生成器/编辑器完善)。

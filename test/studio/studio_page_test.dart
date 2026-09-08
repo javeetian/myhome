@@ -1,14 +1,58 @@
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
+import 'package:myhome/studio/device_list_controller.dart';
 import 'package:myhome/studio/studio_app.dart';
 
 /// Device Studio 页面 (WORK_V3 §22/§30) 渲染测试。
+/// 设备根目录注入临时 fixture，不依赖真实 devices/ 状态
+/// (真实目录可能被用户移除/删除)。
 void main() {
+  late Directory root;
+
+  setUp(() {
+    root = Directory.systemTemp.createTempSync('studio_page_test_');
+    final dir = Directory(p.join(root.path, 'smart_light'))..createSync();
+    File(p.join(dir.path, 'device.yaml')).writeAsStringSync('''
+device:
+  id: smart_light
+  name: Smart Light
+  model: L100
+
+protocol:
+  version: 1
+
+api:
+  version: 1
+
+state: {}
+
+commands: []
+
+events: []
+''');
+  });
+
+  tearDown(() {
+    root.deleteSync(recursive: true);
+  });
+
   testWidgets('idle 状态渲染三栏：设备列表 / 提示 / Inspector / Console', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const ProviderScope(child: StudioApp()));
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          deviceListProvider.overrideWith(
+            () => DeviceListController(devicesRoot: root),
+          ),
+        ],
+        child: const StudioApp(),
+      ),
+    );
     await tester.pump();
 
     // 标题与三栏

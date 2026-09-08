@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path/path.dart' as p;
 
 import '../device/demo_device.dart';
 import '../device/virtual_light.dart';
@@ -254,7 +253,13 @@ class _DeviceListPanel extends ConsumerWidget {
       case _ListAction.create:
         await _showCreateDeviceDialog(context, ref);
       case _ListAction.open:
-        await _showOpenDirDialog(context, ref);
+        // 原生目录选择器 → 选中的设备目录加入列表
+        final error =
+            await ref.read(deviceListProvider.notifier).pickAndImport();
+        if (error != null && context.mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error)));
+        }
     }
   }
 
@@ -313,61 +318,6 @@ class _DeviceListPanel extends ConsumerWidget {
     if (error != null && context.mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(error)));
-    }
-  }
-
-  /// 打开设备目录弹窗：选择目录后在系统文件管理器中打开。
-  Future<void> _showOpenDirDialog(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
-    final notifier = ref.read(deviceListProvider.notifier);
-    final dirs = notifier.allDeviceDirs();
-    if (dirs.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('devices/ 下暂无设备目录')));
-      return;
-    }
-    final selected = await showDialog<String>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: const Text('打开设备目录'),
-        children: <Widget>[
-          for (final dir in dirs)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, dir),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: <Widget>[
-                    const Icon(Icons.folder_open, size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          Text(p.basename(dir)),
-                          Text(
-                            dir,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(fontSize: 10),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-    if (selected != null) {
-      await notifier.openDir(selected);
     }
   }
 

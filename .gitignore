@@ -50,3 +50,7 @@ app.*.map.json
 # C SDK build artifacts (V3 Phase 26)
 *.exe
 *.obj
+
+# studio
+.studio_imports.json
+.removed

@@ -150,34 +150,88 @@ void main() {
     );
   });
 
-  test('allDeviceDirs：包含被移除的目录 (供"打开"选择)', () {
+  test('importDevice：devices/ 内已移除的目录恢复显示', () {
     makeDevice('a');
-    makeDevice('b');
-    File(p.join(root.path, 'b', '.removed')).writeAsStringSync('');
+    File(p.join(root.path, 'a', '.removed')).writeAsStringSync('');
+    expect(container.read(deviceListProvider), isEmpty);
 
-    final dirs = controller().allDeviceDirs();
+    expect(controller().importDevice(p.join(root.path, 'a')), isNull);
 
-    expect(dirs.map(p.basename), containsAll(<String>['a', 'b']));
+    expect(container.read(deviceListProvider), hasLength(1));
+    expect(
+      File(p.join(root.path, 'a', '.removed')).existsSync(),
+      isFalse,
+      reason: '.removed 标记被删除 (恢复显示)',
+    );
   });
 
-  test('openDir：调用注入的 opener', () async {
-    final opened = <String>[];
+  test('importDevice：外部目录加入导入列表并持久化', () {
+    final ext = Directory.systemTemp.createTempSync('ext_dev_');
+    File(p.join(ext.path, 'device.yaml'))
+        .writeAsStringSync(deviceYaml('ext_dev', 'Ext Dev', 'X1'));
+    addTearDown(() => ext.deleteSync(recursive: true));
+
+    expect(controller().importDevice(ext.path), isNull);
+
+    final list = container.read(deviceListProvider);
+    expect(list.single.definition?.name, 'Ext Dev');
+
+    // 持久化：新容器重新扫描仍包含导入目录
+    final container2 = ProviderContainer(
+      overrides: [
+        deviceListProvider
+            .overrideWith(() => DeviceListController(devicesRoot: root)),
+      ],
+    );
+    addTearDown(container2.dispose);
+    expect(
+      container2.read(deviceListProvider).single.dirPath,
+      ext.path,
+    );
+  });
+
+  test('importDevice：所选目录不含 device.yaml → 错误', () {
+    final plain = Directory.systemTemp.createTempSync('plain_dir_');
+    addTearDown(() => plain.deleteSync(recursive: true));
+
+    expect(controller().importDevice(plain.path), contains('device.yaml'));
+  });
+
+  test('importDevice：外部导入的目录被移除标记后不显示', () {
+    final ext = Directory.systemTemp.createTempSync('ext_dev2_');
+    File(p.join(ext.path, 'device.yaml'))
+        .writeAsStringSync(deviceYaml('ext_dev2', 'Ext Dev 2', 'X2'));
+    addTearDown(() => ext.deleteSync(recursive: true));
+    expect(controller().importDevice(ext.path), isNull);
+
+    final info = container.read(deviceListProvider).single;
+    controller().remove(info);
+
+    expect(container.read(deviceListProvider), isEmpty);
+    expect(
+      File(p.join(ext.path, '.removed')).existsSync(),
+      isTrue,
+    );
+  });
+
+  test('pickAndImport：picker 返回 null → 用户取消', () async {
     final testContainer = ProviderContainer(
       overrides: [
         deviceListProvider.overrideWith(
           () => DeviceListController(
             devicesRoot: root,
-            opener: (path) async => opened.add(path),
+            picker: () async => null,
           ),
         ),
       ],
     );
     addTearDown(testContainer.dispose);
 
-    await testContainer
+    final result = await testContainer
         .read(deviceListProvider.notifier)
-        .openDir('/some/device/dir');
+        .pickAndImport();
 
-    expect(opened, <String>['/some/device/dir']);
+    expect(result, isNull);
+    expect(testContainer.read(deviceListProvider), isEmpty);
   });
 }
