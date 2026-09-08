@@ -14,6 +14,7 @@ analyzer:
     - ios/**
     - web/**
     - windows/**
+    - devices/**/generated/**
     - macos/**
 include: package:flutter_lints/flutter.yaml
 

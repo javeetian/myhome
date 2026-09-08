@@ -53,7 +53,7 @@ Phase 21 Fault Injection                              ✅ 完成 (2026-09-08)
 Phase 22 Reconnect                                    ✅ 完成 (2026-09-08)
 Phase 23 State / Patch                                ✅ 复用 V2 (回归通过)
 Phase 24 Command Queue (Replaceable)                  ✅ 完成 (2026-09-08)
-Phase 25 Code Generator                               ⬜
+Phase 25 Code Generator                               ✅ 完成 (2026-09-08)
 Phase 26 C Device SDK                                 ⬜
 Phase 27 Hardware Adapter                             ⬜
 Phase 28 真实设备                                      ⏸ 待硬件
@@ -332,5 +332,47 @@ Load UI Package ✅ / Select Device ✅ / Start Simulator ✅ / Run UI ✅ (WebV
 | FaultInjector：丢包重试耗尽 / 延迟 / CRC 全坏 / 重复去重 / 注入断开 | ✅ 5+1 |
 | 会话：断线自动重连成功 / 拒绝重连耗尽 disconnected / 心跳失联 | ✅ 3 |
 | Replaceable：连发 5 条同键命令 → 中间 3 条被替换，设备仅收首尾 | ✅ 1 |
+
+---
+
+## Phase 25 — Code Generator ✅
+
+**日期：** 2026-09-08
+**硬件依赖：** 无
+
+### 交付物
+
+| 文件 | 对应 § | 内容 |
+|---|---|---|
+| lib/tools/code_generator.dart | §41/§42 | device.yaml → 六件套生成器（纯 Dart 可测） |
+| tools/device_cli.dart | §43 | `device generate <device.yaml> [目录]` |
+| devices/smart_light/generated/ | §41 | Smart Light 实际生成产物（示例） |
+| analysis_options.yaml | | exclude devices/**/generated/**（生成代码不参与 lint） |
+
+### 生成产物 (§41)
+
+```
+generated/
+├── c/device_api.h          命令处理原型 (开发者实现硬件操作, §45)
+├── c/device_commands.c     命令路由表 + 参数解析/校验 (min/max → 3001)
+├── c/device_state.h        状态结构体 + version
+├── dart/device_api.dart    强类型 API (lightSetPower 等) + 状态模型
+├── simulator/virtual_device.dart  虚拟设备骨架 (协议接线 + 参数校验 + TODO 业务点)
+└── manifest.json           V3 格式 (capabilities = 状态键)
+```
+
+### 设计决策
+
+- **不生成** (§42)：main.c / startup / BLE driver / RTOS / HAL / Flash Driver（SDK 提供）
+- 开发者只实现硬件操作函数（§45 的 device_app.c/hardware.c）
+- C 参数解析依赖 SDK core 的 device_json_get_* 函数（生成代码与 SDK 的契约）
+- manifest device.type 与 device.yaml id 对应（yaml 无独立 type 字段）
+- 方法名规则：light.set_power → lightSetPower（Dart 小驼峰）/ light_set_power（C）
+
+### 验证
+
+- 全套测试 254/254（新增 7 例：产物齐全/C 原型/C 路由校验/C 状态/Dart API/Simulator/manifest）
+- CLI 实测：`device generate devices/smart_light/device.yaml` → 6 文件落盘
+- 生成产物可从设备 SDK 直接拷贝编译（§48 流程）
 
 ---

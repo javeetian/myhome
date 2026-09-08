@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:myhome/device/device_definition.dart';
 import 'package:myhome/device/device_manifest.dart';
+import 'package:myhome/tools/code_generator.dart';
 import 'package:myhome/ui_runtime/ui_package.dart';
 import 'package:myhome/ui_runtime/ui_package_validator.dart';
 import 'package:path/path.dart' as p;
@@ -16,6 +17,7 @@ import 'package:path/path.dart' as p;
 /// dart run tools/device_cli.dart validate <device.yaml>
 /// dart run tools/device_cli.dart ui build <ui目录> [输出.ui.pkg]
 /// dart run tools/device_cli.dart ui validate <ui.pkg>
+/// dart run tools/device_cli.dart generate <device.yaml> [输出目录]
 /// ```
 /// 退出码：0 = PASS；1 = ERROR；2 = 用法错误。
 Future<void> main(List<String> args) async {
@@ -28,6 +30,8 @@ Future<void> main(List<String> args) async {
       exit(await _validateDefinition(args));
     case 'ui':
       exit(await _uiCommand(args.sublist(1)));
+    case 'generate':
+      exit(await _generateCommand(args.sublist(1)));
     default:
       _usage();
       exit(2);
@@ -39,6 +43,7 @@ void _usage() {
   stderr.writeln('  device validate <device.yaml>         校验设备定义 (Phase 2)');
   stderr.writeln('  device ui build <ui目录> [输出]       打包 UI 目录为 ui.pkg (Phase 13)');
   stderr.writeln('  device ui validate <ui.pkg>           校验 ui.pkg (Phase 14)');
+  stderr.writeln('  device generate <device.yaml> [目录]  生成多端代码 (Phase 25)');
 }
 
 /// Phase 2：设备定义校验。
@@ -87,6 +92,43 @@ Future<int> _uiCommand(List<String> args) async {
       _usage();
       return 2;
   }
+}
+
+/// Phase 25：device.yaml → 多端代码生成。
+Future<int> _generateCommand(List<String> args) async {
+  if (args.isEmpty) {
+    stderr.writeln('用法: device generate <device.yaml> [输出目录]');
+    return 2;
+  }
+  final file = File(args[0]);
+  if (!file.existsSync()) {
+    stderr.writeln('ERROR: 文件不存在: ${args[0]}');
+    return 1;
+  }
+  final DeviceDefinition def;
+  try {
+    def = DeviceDefinition.fromYaml(await file.readAsString());
+  } on DeviceDefinitionException catch (e) {
+    stderr.writeln('ERROR: 设备定义非法:');
+    for (final error in e.errors) {
+      stderr.writeln('  - $error');
+    }
+    return 1;
+  }
+  final outDir = Directory(args.length > 1
+      ? args[1]
+      : p.join(file.parent.path, 'generated'));
+  final files = CodeGenerator.generate(def);
+  for (final entry in files.entries) {
+    final target = File(p.join(outDir.path, entry.key));
+    target.parent.createSync(recursive: true);
+    target.writeAsStringSync(entry.value);
+  }
+  stdout.writeln('PASS: 生成 ${files.length} 个文件到 ${outDir.path}:');
+  for (final path in files.keys) {
+    stdout.writeln('  - $path');
+  }
+  return 0;
 }
 
 /// Phase 13：目录 → ui.pkg。
