@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import '../device/device_definition.dart';
+import '../device/device_templates.dart';
 import 'studio_controller.dart';
 
 /// devices/ 目录下的设备信息 (扫描结果)。
@@ -31,8 +32,10 @@ class DeviceDirInfo {
 
   bool get isValid => definition != null;
 
-  /// 是否有可启动的模拟器实现 (当前仅 smart_light 参考设备)。
-  bool get hasSimulator => definition?.id == 'smart_light';
+  /// 是否有可启动的模拟器实现：
+  /// 任意合法 device.yaml 均可由 DefinedVirtualDevice 通用模拟器运行
+  /// (smart_light 用带传感器行为的 VirtualLight)。
+  bool get hasSimulator => definition != null;
 }
 
 /// 设备列表控制器：扫描 devices/ 目录，支持移除/删除/新建/导入。
@@ -60,13 +63,66 @@ class DeviceListController extends Notifier<List<DeviceDirInfo>> {
   /// 外部导入目录持久化文件名 (devices/ 根下)。
   static const String importsFileName = '.studio_imports.json';
 
+  /// 设备列表顺序持久化文件名 (长按拖动排序)。
+  static const String orderFileName = '.studio_order.json';
+
   /// 外部导入的设备目录绝对路径。
   final List<String> _imports = <String>[];
+
+  /// 用户拖动的目录顺序 (dirName 列表，缺失的按名称排后面)。
+  final List<String> _order = <String>[];
 
   @override
   List<DeviceDirInfo> build() {
     _loadImports();
+    _loadOrder();
     return _scan();
+  }
+
+  void _loadOrder() {
+    _order.clear();
+    final file = File(p.join(_root.path, orderFileName));
+    if (!file.existsSync()) {
+      return;
+    }
+    try {
+      final data = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      final list = data['order'];
+      if (list is List) {
+        for (final item in list) {
+          if (item is String) {
+            _order.add(item);
+          }
+        }
+      }
+    } catch (_) {
+      // 坏顺序文件：忽略
+    }
+  }
+
+  void _saveOrder(List<String> dirNames) {
+    final root = Directory(_root.path);
+    if (!root.existsSync()) {
+      root.createSync(recursive: true);
+    }
+    File(p.join(_root.path, orderFileName)).writeAsStringSync(
+      jsonEncode(<String, dynamic>{'order': dirNames}),
+    );
+  }
+
+  /// 长按拖动排序：移动 [oldIndex] 到 [newIndex] 并持久化。
+  void moveItem(int oldIndex, int newIndex) {
+    final items = List<DeviceDirInfo>.of(state);
+    if (oldIndex < 0 ||
+        oldIndex >= items.length ||
+        newIndex < 0 ||
+        newIndex > items.length) {
+      return;
+    }
+    final item = items.removeAt(oldIndex);
+    items.insert(newIndex, item);
+    state = items;
+    _saveOrder(items.map((i) => i.dirName).toList());
   }
 
   /// 重新扫描并刷新列表。
@@ -132,7 +188,20 @@ class DeviceListController extends Notifier<List<DeviceDirInfo>> {
         result.add(info);
       }
     }
-    result.sort((a, b) => a.dirName.compareTo(b.dirName));
+    result.sort((a, b) {
+      final ia = _order.indexOf(a.dirName);
+      final ib = _order.indexOf(b.dirName);
+      if (ia >= 0 && ib >= 0) {
+        return ia.compareTo(ib);
+      }
+      if (ia >= 0) {
+        return -1;
+      }
+      if (ib >= 0) {
+        return 1;
+      }
+      return a.dirName.compareTo(b.dirName);
+    });
     return result;
   }
 
@@ -187,9 +256,14 @@ class DeviceListController extends Notifier<List<DeviceDirInfo>> {
       return '目录已存在: $id';
     }
     try {
-      dir.createSync();
-      File(p.join(dir.path, 'device.yaml'))
-          .writeAsStringSync(_deviceYamlTemplate(id, name, model));
+      // 内置模板生成默认文件：device.yaml + ui/manifest.json + ui/index.html
+      // (不依赖 devices/smart_light 目录存在)
+      DeviceTemplates.createDeviceFiles(
+        dirPath: dir.path,
+        id: id,
+        name: name,
+        model: model,
+      );
       refresh();
       return null;
     } catch (e) {
@@ -231,28 +305,7 @@ class DeviceListController extends Notifier<List<DeviceDirInfo>> {
     return null;
   }
 
-  /// device.yaml 骨架 (新建时写入，后续由代码生成器/编辑器完善)。
-  static String _deviceYamlTemplate(String id, String name, String model) =>
-      '''# $name — 新建设备 (完善后可用代码生成器生成 Dart/C/模拟器)
-device:
-  id: $id
-  name: $name
-  model: $model
-
-protocol:
-  version: 1
-
-api:
-  version: 1
-
-state: {}
-
-commands: []
-
-events: []
-''';
 }
-
 /// 设备列表 provider。
 final deviceListProvider =
     NotifierProvider<DeviceListController, List<DeviceDirInfo>>(

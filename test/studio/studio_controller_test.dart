@@ -6,7 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:myhome/device/demo_device.dart';
 import 'package:myhome/device/virtual_light.dart';
 import 'package:myhome/studio/studio_controller.dart';
 import 'package:myhome/ui_runtime/ui_cache.dart';
@@ -68,25 +67,6 @@ void main() {
     expect(state.helloAck?.deviceModel, 'L100');
     expect(state.currentState?.state['power'], isFalse);
     expect(state.entryUrl, startsWith('http://127.0.0.1:'));
-  });
-
-  test('启动 DemoDevice：UI 包解压 → 静态服务 + 协议日志', () async {
-    final ok = await container
-        .read(studioControllerProvider.notifier)
-        .start(DemoDevice());
-
-    expect(ok, isTrue);
-    final state = container.read(studioControllerProvider);
-    expect(state.entryUrl, isNotNull);
-    // UI 包已解压缓存 (index.html 存在)
-    expect(
-      Directory('${tempDir.path}/light/demo-1/${DemoDevice().uiVersion}')
-          .existsSync(),
-      isTrue,
-    );
-    // 协议日志有 TX/RX 帧
-    expect(state.protocolLog.any((l) => l.contains('TX') || l.contains('发送')), isTrue);
-    expect(state.protocolLog.any((l) => l.contains('RX')), isTrue);
   });
 
   test('Inspector 命令：set_power → 状态更新', () async {

@@ -45,10 +45,11 @@ events:
 ''');
   });
 
-  test('生成产物齐全 (§41 六件套)', () {
+  test('生成产物齐全 (§41 七件套)', () {
     final files = CodeGenerator.generate(def);
     expect(files.keys.toSet(), <String>{
       'c/device_api.h',
+      'c/device_api.c',
       'c/device_commands.c',
       'c/device_state.h',
       'dart/device_api.dart',
@@ -66,13 +67,21 @@ events:
     expect(header, contains('#ifndef DEVICE_API_H'));
   });
 
-  test('C 命令路由：路由表 + 参数校验 (min/max)', () {
+  test('C 命令路由：命令表 (device_commands.c)', () {
     final commands = CodeGenerator.generate(def)['c/device_commands.c']!;
     expect(commands, contains('{ "light.set_power"'));
     expect(commands, contains('{ "light.set_brightness"'));
-    expect(commands, contains('ERR_UNKNOWN_COMMAND'));
-    expect(commands, contains('device_json_get_uint(params_json, "value"'));
-    expect(commands, contains('越界 [0, 100]'));
+    expect(commands, contains('g_command_count'));
+  });
+
+  test('C 命令处理：参数解析校验 → 调用开发者函数 (device_api.c)', () {
+    final api = CodeGenerator.generate(def)['c/device_api.c']!;
+    expect(api, contains('device_handle_command'));
+    expect(api, contains('ERR_UNKNOWN_COMMAND'));
+    expect(api, contains('device_json_get_uint(params_json, "value"'));
+    expect(api, contains('越界 [0, 100]'));
+    expect(api, contains('light_set_brightness(value, response_json, response_len)'));
+    expect(api, contains('light_set_power(power, response_json, response_len)'));
   });
 
   test('C 状态结构体', () {

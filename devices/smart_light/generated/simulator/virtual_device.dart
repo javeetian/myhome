@@ -11,7 +11,7 @@ class SmartLightVirtualDevice extends ProtocolDevice {
   String get deviceId => 'smart_light';
 
   @override
-  String get name => 'Smart Light';
+  String get name => 'SmartLight';
 
   @override
   String get uiVersion => '0.1.0'; // TODO: 与 UI 包版本同步
@@ -21,7 +21,7 @@ class SmartLightVirtualDevice extends ProtocolDevice {
         requestId: hello.requestId,
         protocolVersion: 1,
         deviceType: 'smart_light',
-        deviceModel: 'L100',
+        deviceModel: 'SL001',
         firmwareVersion: '0.1.0',
         uiVersion: uiVersion,
         capabilities: const <String>[

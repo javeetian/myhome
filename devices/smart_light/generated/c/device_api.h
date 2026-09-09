@@ -12,7 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* 设备: Smart Light (L100)，协议 v1，API v1 */
+/* 设备: SmartLight (SL001)，协议 v1，API v1 */
 
 /// light.set_power：bool power
 int light_set_power(

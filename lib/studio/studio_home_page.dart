@@ -7,7 +7,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import '../core/app_log.dart';
-import '../device/demo_device.dart';
+import '../device/defined_virtual_device.dart';
+import '../device/device_definition.dart';
+import '../device/protocol_device.dart';
 import '../device/virtual_light.dart';
 import '../simulator/fault_injector.dart';
 import '../ui_runtime/webview_host.dart';
@@ -210,8 +212,25 @@ class _StudioMenuBar extends ConsumerWidget {
                 _MenuButton(
                   label: '运行',
                   entries: <(String, VoidCallback?)>[
-                    ('启动 Smart Light', () => startSmartLight(context, ref)),
-                    ('启动 Demo Light', () => ref.read(studioControllerProvider.notifier).start(DemoDevice())),
+                    (
+                      '生成代码',
+                      studio.deviceDir == null
+                          ? null
+                          : () async {
+                              final error = await controller.generateCode();
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      error ??
+                                          '已生成 ui.pkg + Dart/C/模拟器代码 '
+                                              '(generated/)',
+                                    ),
+                                  ),
+                                );
+                              }
+                            },
+                    ),
                     ('重置设备', studio.isRunning ? controller.reset : null),
                     ('断开', studio.isRunning ? controller.stop : null),
                     ('UI Hot Reload', controller.toggleUiWatch),
@@ -258,21 +277,40 @@ class _StudioMenuBar extends ConsumerWidget {
             child: Row(
               children: <Widget>[
                 const SizedBox(width: 4),
-                // 设备控制 (运行中显示)
-                if (studio.isRunning) ...<Widget>[
-                  IconButton(
-                    icon: const Icon(Icons.refresh, size: 16),
-                    tooltip: '重置设备',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: controller.reset,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.stop, size: 16),
-                    tooltip: '断开',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: controller.stop,
-                  ),
-                ],
+                // 生成代码 (当前设备, 与运行菜单一致)
+                IconButton(
+                  icon: const Icon(Icons.bolt, size: 16),
+                  tooltip: '生成代码',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: studio.deviceDir == null
+                      ? null
+                      : () async {
+                          final error = await controller.generateCode();
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  error ??
+                                      '已生成 ui.pkg + Dart/C/模拟器代码 (generated/)',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                ),
+                // 设备控制 (未启动时禁用置灰)
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 16),
+                  tooltip: '重置设备',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: studio.isRunning ? controller.reset : null,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.stop, size: 16),
+                  tooltip: '断开',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: studio.isRunning ? controller.stop : null,
+                ),
                 // 编辑器字体缩放
                 IconButton(
                   icon: const Icon(Icons.text_decrease, size: 16),
@@ -309,19 +347,6 @@ void _openInExplorer(String path) {
     Process.run('explorer', <String>[path]);
   } else if (Platform.isMacOS) {
     Process.run('open', <String>[path]);
-  }
-}
-
-/// 启动 Smart Light (运行菜单与设备卡片共用)。
-Future<void> startSmartLight(BuildContext context, WidgetRef ref) async {
-  final notifier = ref.read(studioControllerProvider.notifier);
-  final pkg = await notifier.loadSmartLightPkg();
-  final ok = await notifier.start(VirtualLight(uiPkgBytes: pkg));
-  if (ok) {
-    notifier.startUiWatch(
-      StudioController.smartLightUiDir,
-      StudioController.smartLightPkgPath,
-    );
   }
 }
 
@@ -446,32 +471,25 @@ class _DeviceListPanel extends ConsumerWidget {
           ),
         ),
         Expanded(
-          child: ListView(
+          child: ReorderableListView(
             padding: const EdgeInsets.all(8),
+            buildDefaultDragHandles: false,
+            onReorderItem: (oldIndex, newIndex) =>
+                ref.read(deviceListProvider.notifier).moveItem(
+                      oldIndex,
+                      newIndex,
+                    ),
             children: <Widget>[
-              _demoLightCard(context, ref, studio),
               for (final info in devices)
-                _deviceDirCard(context, ref, studio, info),
+                ReorderableDelayedDragStartListener(
+                  key: ValueKey<String>(info.dirName),
+                  index: devices.indexOf(info),
+                  child: _deviceDirCard(context, ref, studio, info),
+                ),
             ],
           ),
         ),
       ],
-    );
-  }
-
-  /// 内置 Demo Light 卡片 (无设备目录，不提供移除/删除)。
-  Widget _demoLightCard(BuildContext context, WidgetRef ref, StudioState studio) {
-    final deviceId = DemoDevice().deviceId;
-    return _deviceCard(
-      context,
-      ref,
-      title: 'Demo Light',
-      subtitle: '内置 UI 演示设备',
-      deviceId: deviceId,
-      isRunning: currentDeviceRunning(studio, deviceId),
-      onStart: () => ref
-          .read(studioControllerProvider.notifier)
-          .start(DemoDevice()),
     );
   }
 
@@ -566,27 +584,27 @@ class _DeviceListPanel extends ConsumerWidget {
     WidgetRef ref,
     DeviceDirInfo info,
   ) async {
+    final definition = info.definition;
     final notifier = ref.read(studioControllerProvider.notifier);
-    if (!info.hasSimulator) {
+    if (definition == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${info.definition?.name}: 尚无模拟器实现'),
-        ),
+        SnackBar(content: Text('${info.dirName}: device.yaml 无效')),
       );
       return;
     }
-    // 构建产物缺失时从源目录现场打包 (QUICKSTART §2 免前提)
-    final pkg = await notifier.loadSmartLightPkg();
-    final ok = await notifier.start(
-      VirtualLight(uiPkgBytes: pkg),
-      deviceDir: info.dirPath,
-    );
+    // UI 包：现场打包该设备的 ui 目录 (产物存在则直读)
+    final uiDir = '${info.dirPath}/ui';
+    final outPkg = '${info.dirPath}/build/ui.pkg';
+    final pkg = await notifier.packUiDir(uiDir, outPkg);
+    // smart_light 用带温度传感器行为的专用模拟器；
+    // 其余设备由 device.yaml 驱动的通用模拟器运行 (定义驱动, WORK_V3)。
+    final ProtocolDevice device = definition.id == 'smart_light'
+        ? VirtualLight(uiPkgBytes: pkg)
+        : DefinedVirtualDevice(definition, uiPkgBytes: pkg);
+    final ok = await notifier.start(device, deviceDir: info.dirPath);
     if (ok) {
       // UI Hot Reload (Phase 37)：源目录变化 → 自动重打包重载
-      notifier.startUiWatch(
-        StudioController.smartLightUiDir,
-        StudioController.smartLightPkgPath,
-      );
+      notifier.startUiWatch(uiDir, outPkg);
     }
   }
 
@@ -643,31 +661,8 @@ class _DeviceListPanel extends ConsumerWidget {
         }
     }
   }
-
-  Widget _deviceCard(
-    BuildContext context,
-    WidgetRef ref, {
-    required String title,
-    required String subtitle,
-    required String deviceId,
-    required bool isRunning,
-    required Future<void> Function() onStart,
-  }) {
-    return Card(
-      child: ListTile(
-        leading: Icon(isRunning ? Icons.lightbulb : Icons.lightbulb_outline),
-        title: Text(title),
-        subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
-        trailing: isRunning
-            ? const Icon(Icons.check_circle, color: Colors.green)
-            : const Icon(Icons.play_arrow),
-        onTap: isRunning ? null : onStart,
-      ),
-    );
-  }
 }
 
-/// 列表头部 ⋮ 菜单动作。
 /// 新建设备弹窗 (菜单栏与设备列表共用)。
 Future<void> showCreateDeviceDialog(BuildContext context, WidgetRef ref) async {
   final created = await showDialog<({String id, String name, String model})>(
@@ -1051,52 +1046,60 @@ class _InspectorPanel extends ConsumerWidget {
     final studio = ref.watch(studioControllerProvider);
     final device = studio.device;
     final notifier = ref.read(studioControllerProvider.notifier);
-    if (device is VirtualLight) {
-      final power = studio.currentState?.state['power'] == true;
-      return <Widget>[
-        FilledButton(
-          onPressed: studio.isRunning
-              ? () => notifier.sendCommand(
-                  'light.set_power', <String, dynamic>{'power': !power})
-              : null,
-          child: Text(power ? '关灯' : '开灯'),
-        ),
-        const SizedBox(height: 6),
-        FilledButton.tonal(
-          onPressed: studio.isRunning
-              ? () => notifier.sendCommand(
-                  'light.set_brightness', <String, dynamic>{'value': 50})
-              : null,
-          child: const Text('亮度 50%'),
-        ),
-        const SizedBox(height: 6),
-        FilledButton.tonal(
-          onPressed: studio.isRunning
-              ? () => notifier.sendCommand('light.set_color_temperature',
-                  <String, dynamic>{'value': 5000})
-              : null,
-          child: const Text('色温 5000K'),
-        ),
-      ];
-    }
-    if (device is DemoDevice) {
-      return <Widget>[
-        FilledButton(
-          onPressed: studio.isRunning
-              ? () => notifier.sendCommand('led_on', const <String, dynamic>{})
-              : null,
-          child: const Text('LED 开'),
-        ),
-        const SizedBox(height: 6),
-        FilledButton.tonal(
-          onPressed: studio.isRunning
-              ? () => notifier.sendCommand('led_off', const <String, dynamic>{})
-              : null,
-          child: const Text('LED 关'),
-        ),
-      ];
+    // 定义驱动 (WORK_V3)：命令按钮完全由 device.yaml 生成，
+    // 任何设备 (VirtualLight / DefinedVirtualDevice) 都不写死命令。
+    final definition = switch (device) {
+      VirtualLight _ => VirtualLight.builtInDefinition,
+      DefinedVirtualDevice d => d.definition,
+      _ => null,
+    };
+    if (definition != null) {
+      final state = studio.currentState?.state ?? const <String, dynamic>{};
+      final buttons = <Widget>[];
+      for (final command in definition.commands) {
+        // 状态键与模拟器约定一致：末段去掉 set_ 前缀
+        final lastSegment = command.name.split('.').last;
+        final stateKey = lastSegment.startsWith('set_')
+            ? lastSegment.substring(4)
+            : lastSegment;
+        final params = <String, dynamic>{
+          for (final entry in command.params.entries)
+            entry.key: _defaultParamValue(entry.value, state[stateKey]),
+        };
+        // bool 状态键：按钮文案随当前状态变化 (开 power / 关 power)
+        final isBoolState =
+            definition.state[stateKey]?.type == ValueType.boolType;
+        final label = isBoolState
+            ? (state[stateKey] == true ? '关 $stateKey' : '开 $stateKey')
+            : stateKey;
+        buttons
+          ..add(FilledButton(
+            onPressed: studio.isRunning
+                ? () => notifier.sendCommand(command.name, params)
+                : null,
+            child: Text(label),
+          ))
+          ..add(const SizedBox(height: 6));
+      }
+      return buttons;
     }
     return const <Widget>[];
+  }
+
+  /// 命令参数默认值：bool → 取反当前值；数值 → 定义范围中间值。
+  Object _defaultParamValue(ParamDefinition def, Object? current) {
+    switch (def.type) {
+      case ValueType.boolType:
+        return !(current == true);
+      case ValueType.uint8:
+      case ValueType.uint16:
+      case ValueType.int32:
+        return ((def.min ?? 0) + (def.max ?? 100)) ~/ 2;
+      case ValueType.float:
+        return ((def.min ?? 0) + (def.max ?? 1)).toDouble() / 2;
+      case ValueType.string:
+        return '';
+    }
   }
 }
 

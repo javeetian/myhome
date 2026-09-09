@@ -3,7 +3,7 @@
 import 'package:myhome/device/device_client.dart';
 import 'package:myhome/protocol/protocol_messages.dart';
 
-/// Smart Light 强类型 Device API (§11)。
+/// SmartLight 强类型 Device API (§11)。
 class SmartLightApi {
   SmartLightApi(this._client);
 
@@ -23,7 +23,7 @@ class SmartLightApi {
 
 }
 
-/// Smart Light 状态模型 (§16.1)。
+/// SmartLight 状态模型 (§16.1)。
 class SmartLightState {
   SmartLightState.fromJson(Map<String, dynamic> json)
       : power = json['power'] as bool,

@@ -1,9 +1,113 @@
-<!DOCTYPE html>
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+
+import '../device/device_definition.dart';
+
+/// 新建设备的默认文件模板 (内置，不依赖 devices/smart_light 目录存在)。
+/// 模板内容与 Smart Light 参考设备一致 (WORK_V3 §2)。
+class DeviceTemplates {
+  DeviceTemplates._();
+
+  /// 内置 Smart Light 设备定义 (VirtualLight / 演示设备共用)。
+  /// 定义驱动：命令、状态、事件全部来自此 yaml，不写死在代码里。
+  static DeviceDefinition builtInSmartLightDefinition() =>
+      DeviceDefinition.fromYaml(
+        deviceYaml('smart_light', 'Smart Light', 'L100'),
+      );
+
+  /// 新建设备目录：生成 device.yaml + ui/manifest.json + ui/index.html。
+  static void createDeviceFiles({
+    required String dirPath,
+    required String id,
+    required String name,
+    required String model,
+  }) {
+    final dir = Directory(dirPath);
+    final uiDir = Directory(p.join(dirPath, 'ui'));
+    uiDir.createSync(recursive: true);
+    File(p.join(dir.path, 'device.yaml'))
+        .writeAsStringSync(deviceYaml(id, name, model));
+    File(p.join(uiDir.path, 'manifest.json'))
+        .writeAsStringSync(uiManifest(id, model));
+    File(p.join(uiDir.path, 'index.html')).writeAsStringSync(uiIndexHtml(name));
+  }
+
+  /// Smart Light 完整设备定义 (状态/命令/事件齐全)。
+  static String deviceYaml(String id, String name, String model) => '''
+# $name
+device:
+  id: $id
+  name: $name
+  model: $model
+
+protocol:
+  version: 1
+
+api:
+  version: 1
+
+state:
+  power:
+    type: bool
+
+  brightness:
+    type: uint8
+    min: 0
+    max: 100
+
+  color_temperature:
+    type: uint16
+    min: 2700
+    max: 6500
+
+commands:
+  - name: light.set_power
+    params:
+      power:
+        type: bool
+
+  - name: light.set_brightness
+    params:
+      value:
+        type: uint8
+        min: 0
+        max: 100
+
+  - name: light.set_color_temperature
+    params:
+      value:
+        type: uint16
+        min: 2700
+        max: 6500
+
+events:
+  - name: $id.state_changed
+''';
+
+  /// V3 格式 UI manifest。
+  static String uiManifest(String id, String model) => '''{
+  "package": "${id}_ui",
+  "version": "1.0.0",
+  "device": {
+    "type": "$id",
+    "model": "$model"
+  },
+  "protocol": {
+    "version": 1
+  },
+  "entry": "index.html",
+  "api_version": 1
+}
+''';
+
+  /// Smart Light UI 页面 (电源 / 亮度 / 色温 / 温度，deviceApi 零样板)。
+  static String uiIndexHtml(String name) => r'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>SmartLight</title>
+<title>__NAME__</title>
 <style>
   body { font-family: -apple-system, sans-serif; margin: 0; background: #f5f6fa; overscroll-behavior: none; -webkit-touch-callout: none; }
   header { background: #3949ab; color: #fff; padding: 16px; text-align: center; font-size: 18px; }
@@ -18,7 +122,7 @@
 </style>
 </head>
 <body>
-<header>SmartLight</header>
+<header>__NAME__</header>
 <main>
   <div class="card">温度 <span class="temp" id="temp">--</span> ℃</div>
 
@@ -77,3 +181,5 @@
 </script>
 </body>
 </html>
+'''.replaceAll('__NAME__', name);
+}

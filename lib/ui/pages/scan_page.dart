@@ -1,13 +1,19 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../device/connection_phase.dart';
-import '../../device/demo_device.dart';
+import '../../device/defined_virtual_device.dart';
+import '../../device/device_definition.dart';
 import '../../providers/ble_provider.dart';
 import '../../providers/device_session_provider.dart';
 import '../../providers/ui_runtime_provider.dart';
+import '../../device/device_templates.dart';
+import '../../ui_runtime/ui_package.dart';
 import 'device_page.dart';
 
 /// 设备扫描页：扫描真实 BLE 设备，或使用演示设备跑通完整链路 (无需硬件)。
@@ -53,12 +59,23 @@ class _ScanPageState extends ConsumerState<ScanPage> {
     }
   }
 
-  /// 演示设备 (WORK_V2 §30 硬件到位前的替代)：本进程内脚本设备，
-  /// App 侧走完整 DeviceClient → Protocol → Transport 链路，
+  /// 演示设备 (WORK_V2 §30 硬件到位前的替代)：内置 Smart Light 定义驱动的
+  /// 通用模拟器，App 侧走完整 DeviceClient → Protocol → Transport 链路，
   /// UI 走完整 Phase 10 流程 (manifest → 下载 ui.pkg → 缓存)。
   Future<void> _openDemo() async {
     setState(() => _busy = true);
-    final demo = DemoDevice();
+    final definition = DeviceDefinition.fromYaml(
+      DeviceTemplates.deviceYaml('smart_light', 'Smart Light', 'L100'),
+    );
+    final pkg = UiPackage.pack(<String, Uint8List>{
+      'manifest.json': Uint8List.fromList(
+        utf8.encode(DeviceTemplates.uiManifest('smart_light', 'L100')),
+      ),
+      'index.html': Uint8List.fromList(
+        utf8.encode(DeviceTemplates.uiIndexHtml('Smart Light')),
+      ),
+    });
+    final demo = DefinedVirtualDevice(definition, uiPkgBytes: pkg);
     try {
       await ref
           .read(deviceSessionProvider.notifier)

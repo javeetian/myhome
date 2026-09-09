@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import '../protocol/protocol_messages.dart';
+import 'device_templates.dart';
 import '../ui_runtime/ui_package.dart';
+import 'device_definition.dart';
 import 'device_manifest.dart';
 import 'light_device_logic.dart';
 import 'protocol_device.dart';
@@ -24,6 +27,10 @@ import 'virtual_hardware.dart';
 /// ```
 /// 真实设备固件实现相同 Device Logic（操作真实硬件驱动），
 /// 模拟与真实共享同一命令语义与状态模型 (§4)。
+///
+/// 命令/状态/事件定义统一来自内置 device.yaml (DeviceTemplates)，
+/// 客户自定义设备 (如 light_bar) 由 [DefinedVirtualDevice] 按
+/// 其自己的 device.yaml 驱动 —— 模拟器与 Studio 均不写死命令。
 class VirtualLight extends ProtocolDevice {
   VirtualLight._(this.hardware, this.logic, this.uiPkgBytes);
 
@@ -32,6 +39,21 @@ class VirtualLight extends ProtocolDevice {
   factory VirtualLight({LightHardware? hardware, Uint8List? uiPkgBytes}) {
     final hw = hardware ?? LightHardware();
     return VirtualLight._(hw, LightDeviceLogic(hw), uiPkgBytes);
+  }
+
+  /// Smart Light 定义：优先读磁盘 devices/smart_light/device.yaml
+  /// (客户可修改，与其它设备一致)；目录不存在时回退内置模板
+  /// (仅用于新建设备默认文件与移动 App 演示场景)。
+  static DeviceDefinition get builtInDefinition {
+    try {
+      final file = File('devices/smart_light/device.yaml');
+      if (file.existsSync()) {
+        return DeviceDefinition.fromYaml(file.readAsStringSync());
+      }
+    } catch (_) {
+      // 坏 yaml：回退内置模板
+    }
+    return DeviceTemplates.builtInSmartLightDefinition();
   }
 
   final LightHardware hardware;

@@ -55,15 +55,14 @@ events: []
         child: const MaterialApp(home: StudioHomePage()),
       );
 
-  testWidgets('渲染：内置 Demo Light + devices/ 扫描的目录设备卡片', (tester) async {
+  testWidgets('渲染：devices/ 扫描的目录设备卡片', (tester) async {
     await tester.pumpWidget(buildApp());
 
     expect(find.text('设备'), findsOneWidget);
-    expect(find.text('Demo Light'), findsOneWidget);
     expect(find.text('AC Unit'), findsOneWidget);
     expect(find.text('AC-1 · ac_unit'), findsOneWidget);
-    // 卡片左上角 ⋮ (Demo Light 无 ⋮, 目录设备有 1 个)
-    expect(find.byIcon(Icons.more_vert), findsNWidgets(2)); // 头部 1 + 卡片 1
+    // 卡片左上角 ⋮ (头部 1 + 目录设备卡片 1)
+    expect(find.byIcon(Icons.more_vert), findsNWidgets(2));
   });
 
   testWidgets('设备卡片 ⋮ 菜单：移除 / 删除', (tester) async {

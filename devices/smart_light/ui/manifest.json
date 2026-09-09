@@ -2,8 +2,8 @@
   "package": "smart_light_ui",
   "version": "1.0.0",
   "device": {
-    "type": "light",
-    "model": "L100"
+    "type": "smart_light",
+    "model": "SL001"
   },
   "protocol": {
     "version": 1

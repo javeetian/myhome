@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "device": {
     "type": "smart_light",
-    "model": "L100"
+    "model": "SL001"
   },
   "protocol": {
     "version": 1

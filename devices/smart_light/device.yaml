@@ -1,8 +1,8 @@
-# Smart Light — 第一个参考设备 (WORK_V3 §2)
+# SmartLight
 device:
   id: smart_light
-  name: Smart Light
-  model: L100
+  name: SmartLight
+  model: SL001
 
 protocol:
   version: 1
@@ -45,4 +45,4 @@ commands:
         max: 6500
 
 events:
-  - name: light.state_changed
+  - name: smart_light.state_changed

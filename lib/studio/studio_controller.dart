@@ -8,10 +8,12 @@ import 'package:path/path.dart' as p;
 
 import '../core/app_log.dart';
 import '../device/device_client.dart';
+import '../device/device_definition.dart';
 import '../device/device_manifest.dart';
 import '../device/protocol_device.dart';
 import '../protocol/protocol_messages.dart';
 import '../simulator/fault_injector.dart';
+import '../tools/code_generator.dart';
 import 'opened_files_controller.dart';
 import '../ui_runtime/ui_cache.dart';
 import '../ui_runtime/ui_package.dart';
@@ -273,26 +275,30 @@ class StudioController extends Notifier<StudioState> {
   /// 加载 Smart Light UI 包：优先构建产物；不存在则从源目录现场打包。
   /// 返回 null = 无 UI (纯协议调试模式)。文件访问失败同样返回 null，
   /// 由无 UI 提示页兜底，不让异常打穿启动流程。
-  Future<Uint8List?> loadSmartLightPkg() async {
+  Future<Uint8List?> loadSmartLightPkg() =>
+      packUiDir(smartLightUiDir, smartLightPkgPath);
+
+  /// 通用：UI 源目录 → ui.pkg (产物存在则直接读，否则现场打包落盘)。
+  /// 返回 null = 目录/源不存在。
+  Future<Uint8List?> packUiDir(String uiDir, String outPkg) async {
     try {
-      final pkgPath = resolvePath(smartLightPkgPath);
-      final uiDirPath = resolvePath(smartLightUiDir);
+      final pkgPath = resolvePath(outPkg);
+      final uiDirPath = resolvePath(uiDir);
       final pkgFile = File(pkgPath);
       if (pkgFile.existsSync()) {
         return Uint8List.fromList(pkgFile.readAsBytesSync());
       }
-      final uiDir = Directory(uiDirPath);
-      if (!uiDir.existsSync()) {
+      final dir = Directory(uiDirPath);
+      if (!dir.existsSync()) {
         return null;
       }
       final files = <String, Uint8List>{};
-      for (final entity in uiDir.listSync(recursive: true)) {
+      for (final entity in dir.listSync(recursive: true)) {
         if (entity is! File) {
           continue;
         }
-        final rel = p
-            .relative(entity.path, from: uiDir.path)
-            .replaceAll('\\', '/');
+        final rel =
+            p.relative(entity.path, from: dir.path).replaceAll('\\', '/');
         files[rel] = Uint8List.fromList(entity.readAsBytesSync());
       }
       if (!files.containsKey('manifest.json')) {
@@ -342,6 +348,40 @@ class StudioController extends Notifier<StudioState> {
   void setLogLevel(LogLevel level) {
     _log?.level = level;
     _appendLog('INFO 日志等级 → ${level.name.toUpperCase()}');
+  }
+
+  /// 运行菜单：为当前设备生成代码 (六件套 + ui.pkg)。
+  /// 返回 null = 成功；非 null = 错误消息。
+  Future<String?> generateCode() async {
+    final dir = state.deviceDir;
+    if (dir == null) {
+      return '当前无设备目录 (请先启动一个设备)';
+    }
+    try {
+      final yamlFile = File(p.join(dir, 'device.yaml'));
+      if (!yamlFile.existsSync()) {
+        return '缺少 device.yaml';
+      }
+      final definition =
+          DeviceDefinition.fromYaml(yamlFile.readAsStringSync());
+      final files = CodeGenerator.generate(definition);
+      final outDir = Directory(p.join(dir, 'generated'));
+      for (final entry in files.entries) {
+        final target = File(p.join(outDir.path, entry.key));
+        target.parent.createSync(recursive: true);
+        target.writeAsStringSync(entry.value);
+      }
+      // ui.pkg
+      await packUiDir(p.join(dir, 'ui'), p.join(dir, 'build', 'ui.pkg'));
+      _appendLog(
+        'INFO 代码生成完成: ${files.length} 文件 → ${outDir.path}',
+      );
+      return null;
+    } on DeviceDefinitionException catch (e) {
+      return 'device.yaml 无效: ${e.errors.join('; ')}';
+    } catch (e) {
+      return '生成失败: $e';
+    }
   }
 
   /// 菜单栏：重载 UI 预览 (reloadCount++ → WebView 重载)。

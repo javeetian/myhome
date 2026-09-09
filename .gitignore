@@ -54,6 +54,7 @@ app.*.map.json
 # studio
 .studio_imports.json
 .removed
+devices/
 
 # tmp ignore
 pubspec.lock

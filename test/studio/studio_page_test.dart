@@ -67,8 +67,7 @@ events: []
     expect(find.text('Inspector'), findsOneWidget);
     expect(find.text('Protocol Console'), findsOneWidget);
 
-    // 设备列表：内置 Demo Light + devices/ 扫描的目录设备 (smart_light)
-    expect(find.text('Demo Light'), findsOneWidget);
+    // 设备列表：devices/ 扫描的目录设备 (smart_light)
     expect(find.text('Smart Light'), findsOneWidget);
     expect(find.text('L100 · smart_light'), findsOneWidget);
 
