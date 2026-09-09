@@ -60,9 +60,46 @@ Studio 运行时直接编辑 `devices/smart_light/ui/` 下的文件 → 保存�
 
 ---
 
-# 3. 设计 UI
+# 3. 编译与发布
 
-## 3.1 目录结构
+## 3.1 移动 App（Android / iOS）
+
+```bash
+flutter build apk --release        # Android APK → build/app/outputs/flutter-apk/
+flutter build ios --release        # iOS (需 macOS + Xcode)
+```
+
+## 3.2 桌面 App（Windows / macOS）
+
+```bash
+flutter build windows --release    # Windows App (lib/main.dart)
+flutter build macos --release      # macOS App (需 Mac 机器)
+```
+
+## 3.3 Device Studio（PC 开发工具）
+
+```bash
+flutter build windows --release -t lib/studio/studio_main.dart   # Windows Studio
+flutter build macos --release -t lib/studio/studio_main.dart      # macOS Studio
+```
+
+## 3.4 发布要点
+
+- 产物位置：`build/<平台>/x64/runner/Release/` —— **整个目录**即发布包
+  （exe + data/ + 依赖 DLL），拷贝到目标机器双击 exe 运行
+- 目标机要求：Windows 10/11（自带 Edge WebView2 Runtime）；
+  移动端无需 WebView2（用系统 WebView）
+- Studio 发布包建议随附 `devices/` 设备工作目录（见 §2.3 新建设备）；
+  没有也能用"文件 → 打开设备目录"导入
+- 开发期：`flutter run`（加 `-t` 选入口）；发布后：双击 exe 即可，
+  不需要任何 Flutter 环境
+
+---
+
+# 4. 设计 UI
+
+
+## 4.1 目录结构
 
 ```text
 devices/<设备id>/ui/
@@ -73,7 +110,7 @@ devices/<设备id>/ui/
 └── assets/            # (可选) 图片/字体等
 ```
 
-## 3.2 manifest.json（V3 格式）
+## 4.2 manifest.json（V3 格式）
 
 ```json
 {
@@ -86,13 +123,13 @@ devices/<设备id>/ui/
 }
 ```
 
-## 3.3 页面规则（重要）
+## 4.3 页面规则（重要）
 
 1. **全部相对路径**：`fetch('api/command')`、`assets/icon.png` —— session token 由
    App 的 `/s/<token>/` 前缀自动携带，页面无需感知
 2. **不要手写 fetch / WebSocket**：使用 App 自动注入的 `deviceApi`（零样板代码）
 
-## 3.4 Device API（页面直接使用）
+## 4.4 Device API（页面直接使用）
 
 ```javascript
 // 命令（返回 Promise，resolve 为 {status, data, error}）
@@ -109,7 +146,7 @@ deviceApi.onEvent('light.state_changed', function(data) { ... });
 deviceApi.onPatch(function(ops) { ... });   // 补丁自动应用到 deviceState
 ```
 
-## 3.5 最小示例
+## 4.5 最小示例
 
 ```html
 <!DOCTYPE html>
@@ -134,7 +171,7 @@ deviceApi.onPatch(function(ops) { ... });   // 补丁自动应用到 deviceState
 
 完整示例：`devices/smart_light/ui/index.html`（电源/亮度/色温/温度 + 事件日志）。
 
-## 3.6 打包与校验
+## 4.6 打包与校验
 
 ```bash
 dart run tools/device_cli.dart ui build devices/smart_light/ui
@@ -146,7 +183,7 @@ dart run tools/device_cli.dart ui validate devices/smart_light/build/ui.pkg
 
 ---
 
-# 4. 设备定义（device.yaml）
+# 5. 设备定义（device.yaml）
 
 UI 对应的设备能力由 `devices/<设备id>/device.yaml` 定义（唯一数据源）：
 
@@ -192,9 +229,9 @@ dart run tools/device_cli.dart validate devices/smart_light/device.yaml
 
 ---
 
-# 5. 生成固件代码
+# 6. 生成固件代码
 
-## 5.1 生成
+## 6.1 生成
 
 ```bash
 dart run tools/device_cli.dart generate devices/smart_light/device.yaml
@@ -213,7 +250,7 @@ generated/
 └── manifest.json            UI manifest
 ```
 
-## 5.2 移植到设备 SDK（WORK_V3 §44/§48）
+## 6.2 移植到设备 SDK（WORK_V3 §44/§48）
 
 ```text
 1. 拷贝 sdk/device/core/ + sdk/device/hardware/ 到 <设备SDK>/   (协议运行时)
@@ -223,7 +260,7 @@ generated/
 5. MCU 编译（main.c / BLE driver / RTOS / HAL 由设备 SDK 提供）
 ```
 
-## 5.3 开发者要写的唯一代码（§45）
+## 6.3 开发者要写的唯一代码（§45）
 
 实现 `device_api.h` 声明的函数 + `g_hardware`（真实硬件驱动调用）：
 
@@ -250,7 +287,7 @@ int light_set_brightness(uint8_t value, char* response_json, int response_len) {
 生成代码负责：协议路由、参数解析与校验（类型错/越界 → 3001，未知命令 → 3002）、
 状态结构体。**不生成**：main.c / BLE 驱动 / RTOS / HAL（§42，SDK 提供）。
 
-## 5.4 一致性保证
+## 6.4 一致性保证
 
 C 协议实现与 Dart 模拟器**字节级一致**（golden 向量验证）：
 
@@ -266,7 +303,7 @@ test_sdk.exe    # ALL PASS (11 项)
 
 ---
 
-# 6. 完整开发流程（一页图）
+# 7. 完整开发流程（一页图）
 
 ```text
 ┌─ PC 开发 (无需硬件) ──────────────────────────────────────┐
@@ -288,7 +325,7 @@ test_sdk.exe    # ALL PASS (11 项)
 
 ---
 
-# 7. 常见问题
+# 8. 常见问题
 
 | 问题 | 处理 |
 |---|---|
