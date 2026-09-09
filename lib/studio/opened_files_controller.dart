@@ -5,13 +5,16 @@ import 'package:path/path.dart' as p;
 
 /// 已打开文件状态 (编辑器标签栏)。
 class OpenedFilesState {
-  const OpenedFilesState({required this.paths, this.active});
+  const OpenedFilesState({required this.paths, this.active, this.revision = 0});
 
   /// 已打开文件路径 (标签顺序)。
   final List<String> paths;
 
   /// 当前激活的标签 (null = 无)。
   final String? active;
+
+  /// 内容版本 (UI 表单保存后 +1 → 编辑器重建重载)。
+  final int revision;
 }
 
 /// 已打开文件控制器：文件树点击 → open；标签切换 / 关闭。
@@ -38,7 +41,8 @@ class OpenedFilesController extends Notifier<OpenedFilesState> {
     if (!paths.contains(path)) {
       paths.add(path);
     }
-    state = OpenedFilesState(paths: paths, active: path);
+    state = OpenedFilesState(
+        paths: paths, active: path, revision: state.revision);
   }
 
   /// 关闭标签；关闭激活标签时激活最后一个剩余标签。
@@ -47,12 +51,27 @@ class OpenedFilesController extends Notifier<OpenedFilesState> {
     final active = state.active == path
         ? (paths.isEmpty ? null : paths.last)
         : state.active;
-    state = OpenedFilesState(paths: paths, active: active);
+    state = OpenedFilesState(
+        paths: paths, active: active, revision: state.revision);
   }
 
   /// 切换激活标签。
   void setActive(String path) =>
-      state = OpenedFilesState(paths: state.paths, active: path);
+      state = OpenedFilesState(
+        paths: state.paths, active: path, revision: state.revision);
+
+  /// UI 表单保存后调用：revision+1 → 编辑器 key 变化 → 重新加载文件内容。
+  void reloadActive() {
+    final active = state.active;
+    if (active == null) {
+      return;
+    }
+    state = OpenedFilesState(
+      paths: state.paths,
+      active: active,
+      revision: state.revision + 1,
+    );
+  }
 
   /// 下一个标签 (循环)。
   void nextTab() {

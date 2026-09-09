@@ -27,3 +27,22 @@ class ShowConsole extends Notifier<bool> {
 
 final showConsoleProvider =
     NotifierProvider<ShowConsole, bool>(ShowConsole.new);
+
+/// 编辑器视图模式：源码 / UI 表单。
+enum EditorView { source, ui }
+
+/// 编辑器视图切换 (标签栏右上角按钮)。
+class EditorViewController extends Notifier<EditorView> {
+  @override
+  EditorView build() => EditorView.source;
+
+  void set(EditorView view) => state = view;
+
+  void toggle() => state =
+      state == EditorView.source ? EditorView.ui : EditorView.source;
+}
+
+final editorViewControllerProvider =
+    NotifierProvider<EditorViewController, EditorView>(
+  EditorViewController.new,
+);

@@ -14,6 +14,7 @@ import '../device/virtual_light.dart';
 import '../simulator/fault_injector.dart';
 import '../ui_runtime/webview_host.dart';
 import 'device_file_tree.dart';
+import 'device_yaml_form.dart';
 import 'device_list_controller.dart';
 import 'editor_settings.dart';
 import 'opened_files_controller.dart';
@@ -797,6 +798,7 @@ class _CenterPanel extends ConsumerWidget {
                   ),
                 )
               : _buildContent(
+                  ref,
                   studio,
                   opened,
                   split,
@@ -812,18 +814,29 @@ class _CenterPanel extends ConsumerWidget {
   }
 
   Widget _buildContent(
+    WidgetRef ref,
     StudioState studio,
     OpenedFilesState opened,
     bool split, {
     required double fontSize,
   }) {
-    final editor = opened.active == null
-        ? const Center(child: Text('从左侧文件树选择文件'))
-        : SourceEditor(
-            key: ValueKey<String>(opened.active!),
-            path: opened.active!,
-            fontSize: fontSize,
-          );
+    final Widget editor;
+    if (opened.active == null) {
+      editor = const Center(child: Text('从左侧文件树选择文件'));
+    } else if (ref.watch(editorViewControllerProvider) == EditorView.ui &&
+        p.basename(opened.active!) == 'device.yaml') {
+      // UI 视图：device.yaml 可视化表单
+      editor = DeviceYamlForm(
+        key: ValueKey<String>('${opened.active}#${opened.revision}'),
+        path: opened.active!,
+      );
+    } else {
+      editor = SourceEditor(
+        key: ValueKey<String>('${opened.active}#${opened.revision}'),
+        path: opened.active!,
+        fontSize: fontSize,
+      );
+    }
     if (!split) {
       return editor;
     }
@@ -871,17 +884,88 @@ class _EditorTabBar extends ConsumerWidget {
                     ],
                   ),
           ),
-          IconButton(
-            icon: Icon(split ? Icons.vertical_split : Icons.splitscreen, size: 16),
+          // 视图切换：源码 / UI 表单 (device.yaml 支持可视化编辑)
+          // Flexible + FittedBox：中间栏极窄时按钮区自动缩放，避免溢出
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+          _toolButton(
+            context,
+            ref,
+            icon: Icons.code,
+            tooltip: '源码视图',
+            active: ref.watch(editorViewControllerProvider) == EditorView.source,
+            onTap: () => ref
+                .read(editorViewControllerProvider.notifier)
+                .set(EditorView.source),
+          ),
+          _toolButton(
+            context,
+            ref,
+            icon: Icons.list_alt,
+            tooltip: _supportsUiView(opened.active)
+                ? 'UI 视图 (可视化编辑)'
+                : '此文件类型不支持 UI 视图',
+            active: ref.watch(editorViewControllerProvider) == EditorView.ui,
+            onTap: _supportsUiView(opened.active)
+                ? () => ref
+                    .read(editorViewControllerProvider.notifier)
+                    .set(EditorView.ui)
+                : null,
+          ),
+          _toolButton(
+            context,
+            ref,
+            icon: split ? Icons.vertical_split : Icons.splitscreen,
             tooltip: split ? '合并视图' : '拆分视图：源码 | 预览',
-            visualDensity: VisualDensity.compact,
-            onPressed: () =>
-                ref.read(splitPreviewProvider.notifier).toggle(),
+            active: split,
+            onTap: () => ref.read(splitPreviewProvider.notifier).toggle(),
+          ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
     );
   }
+
+  /// 紧凑工具栏按钮 (固定 22px 宽，避免 IconButton 默认 fixedSize)。
+  Widget _toolButton(
+    BuildContext context,
+    WidgetRef ref, {
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onTap,
+    bool active = false,
+  }) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          width: 22,
+          height: 30,
+          child: Icon(
+            icon,
+            size: 15,
+            // 禁用置灰；激活高亮
+            color: onTap == null
+                ? Colors.grey
+                : (active ? primary : null),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 支持 UI 表单视图的文件类型。
+  static bool _supportsUiView(String? path) =>
+      path != null && p.basename(path) == 'device.yaml';
 
   Widget _tab(BuildContext context, WidgetRef ref, String path,
       {required bool active}) {
