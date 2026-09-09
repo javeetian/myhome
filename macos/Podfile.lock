@@ -1,54 +1,16 @@
 PODS:
-  - file_picker_darwin (1.0.0):
-    - Flutter
-    - FlutterMacOS
   - FlutterMacOS (1.0.0)
-  - Protobuf (3.29.6)
-  - reactive_ble_mobile (0.0.1):
-    - Flutter
-    - FlutterMacOS
-    - Protobuf (~> 3.5)
-    - SwiftProtobuf (~> 1.0)
-  - SwiftProtobuf (1.38.1)
-  - url_launcher_macos (0.0.1):
-    - FlutterMacOS
-  - webview_flutter_wkwebview (0.0.1):
-    - Flutter
-    - FlutterMacOS
 
 DEPENDENCIES:
-  - file_picker_darwin (from `Flutter/ephemeral/.symlinks/plugins/file_picker_darwin/darwin`)
   - FlutterMacOS (from `Flutter/ephemeral`)
-  - reactive_ble_mobile (from `Flutter/ephemeral/.symlinks/plugins/reactive_ble_mobile/darwin`)
-  - url_launcher_macos (from `Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos`)
-  - webview_flutter_wkwebview (from `Flutter/ephemeral/.symlinks/plugins/webview_flutter_wkwebview/darwin`)
-
-SPEC REPOS:
-  trunk:
-    - Protobuf
-    - SwiftProtobuf
 
 EXTERNAL SOURCES:
-  file_picker_darwin:
-    :path: Flutter/ephemeral/.symlinks/plugins/file_picker_darwin/darwin
   FlutterMacOS:
     :path: Flutter/ephemeral
-  reactive_ble_mobile:
-    :path: Flutter/ephemeral/.symlinks/plugins/reactive_ble_mobile/darwin
-  url_launcher_macos:
-    :path: Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos
-  webview_flutter_wkwebview:
-    :path: Flutter/ephemeral/.symlinks/plugins/webview_flutter_wkwebview/darwin
 
 SPEC CHECKSUMS:
-  file_picker_darwin: 4c2b9a50ea44cb3b071381ea0cf48591bdd80251
-  FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
-  Protobuf: 8d5596f7468be5400861a6bbfb2dfe9d0d1cde34
-  reactive_ble_mobile: c6a561a56b81d802642823cd3455a6dee24629d7
-  SwiftProtobuf: 409d3aaec90e51b1705b1dd8065b56893450e77c
-  url_launcher_macos: f87a979182d112f911de6820aefddaf56ee9fbfd
-  webview_flutter_wkwebview: 8ebf4fded22593026f7dbff1fbff31ea98573c8d
+  FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
 
-PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
+PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
 
 COCOAPODS: 1.16.2
