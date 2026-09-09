@@ -1,15 +1,19 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import '../core/app_log.dart';
 import '../device/demo_device.dart';
 import '../device/virtual_light.dart';
 import '../simulator/fault_injector.dart';
 import '../ui_runtime/webview_host.dart';
 import 'device_file_tree.dart';
 import 'device_list_controller.dart';
+import 'editor_settings.dart';
 import 'opened_files_controller.dart';
 import 'source_editor.dart';
 import 'split_pane.dart';
@@ -38,68 +42,328 @@ class _StudioHomePageState extends ConsumerState<StudioHomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Device Studio'),
-        actions: <Widget>[
-          if (ref.watch(studioControllerProvider).isRunning)
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: '重置设备',
-              onPressed: () =>
-                  ref.read(studioControllerProvider.notifier).reset(),
-            ),
-          if (ref.watch(studioControllerProvider).isRunning)
-            IconButton(
-              icon: const Icon(Icons.stop),
-              tooltip: '断开',
-              onPressed: () => ref.read(studioControllerProvider.notifier).stop(),
-            ),
-        ],
-      ),
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      body: Column(
         children: <Widget>[
-          SizedBox(
-            width: _deviceListWidth,
-            child: const _DeviceListPanel(),
-          ),
-          _PanelDivider(
-            key: StudioHomePage.deviceListDividerKey,
-            onDrag: (delta) => setState(() {
-              _deviceListWidth = (_deviceListWidth + delta).clamp(120.0, 480.0);
-            }),
-          ),
-          // 文件树：与设备列表并排 (当前设备目录)
-          SizedBox(
-            width: _fileTreeWidth,
-            child: Consumer(
-              builder: (context, ref, _) => DeviceFileTree(
-                deviceDir: ref.watch(studioControllerProvider).deviceDir,
-                onFileTap: (path) =>
-                    ref.read(openedFilesProvider.notifier).open(path),
-              ),
+          const _StudioMenuBar(),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                SizedBox(
+                  width: _deviceListWidth,
+                  child: const _DeviceListPanel(),
+                ),
+                _PanelDivider(
+                  key: StudioHomePage.deviceListDividerKey,
+                  onDrag: (delta) => setState(() {
+                    _deviceListWidth =
+                        (_deviceListWidth + delta).clamp(120.0, 480.0);
+                  }),
+                ),
+                // 文件树：与设备列表并排 (当前设备目录)
+                SizedBox(
+                  width: _fileTreeWidth,
+                  child: Consumer(
+                    builder: (context, ref, _) => DeviceFileTree(
+                      deviceDir: ref.watch(studioControllerProvider).deviceDir,
+                      onFileTap: (path) =>
+                          ref.read(openedFilesProvider.notifier).open(path),
+                    ),
+                  ),
+                ),
+                _PanelDivider(
+                  key: StudioHomePage.fileTreeDividerKey,
+                  onDrag: (delta) => setState(() {
+                    _fileTreeWidth =
+                        (_fileTreeWidth + delta).clamp(120.0, 480.0);
+                  }),
+                ),
+                const Expanded(child: _CenterPanel()),
+                _PanelDivider(
+                  key: StudioHomePage.inspectorDividerKey,
+                  // 拖动向右 → Inspector 变窄
+                  onDrag: (delta) => setState(() {
+                    _inspectorWidth =
+                        (_inspectorWidth - delta).clamp(180.0, 480.0);
+                  }),
+                ),
+                SizedBox(
+                  width: _inspectorWidth,
+                  child: const _InspectorPanel(),
+                ),
+              ],
             ),
-          ),
-          _PanelDivider(
-            key: StudioHomePage.fileTreeDividerKey,
-            onDrag: (delta) => setState(() {
-              _fileTreeWidth = (_fileTreeWidth + delta).clamp(120.0, 480.0);
-            }),
-          ),
-          const Expanded(child: _CenterPanel()),
-          _PanelDivider(
-            key: StudioHomePage.inspectorDividerKey,
-            // 拖动向右 → Inspector 变窄
-            onDrag: (delta) => setState(() {
-              _inspectorWidth = (_inspectorWidth - delta).clamp(180.0, 480.0);
-            }),
-          ),
-          SizedBox(
-            width: _inspectorWidth,
-            child: const _InspectorPanel(),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 顶部菜单栏：文件 / 设置 / 帮助。
+class _StudioMenuBar extends ConsumerWidget {
+  const _StudioMenuBar();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final studio = ref.watch(studioControllerProvider);
+    final controller = ref.read(studioControllerProvider.notifier);
+    final opened = ref.watch(openedFilesProvider);
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerLowest,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          // 菜单栏行 (VSCode 风格)
+          SizedBox(
+            height: 30,
+            child: Row(
+              children: <Widget>[
+                _MenuButton(
+                  label: '文件',
+                  entries: <(String, VoidCallback?)>[
+                    ('新建设备', () => showCreateDeviceDialog(context, ref)),
+                    (
+                      '打开设备目录',
+                      () async {
+                        final error = await ref
+                            .read(deviceListProvider.notifier)
+                            .pickAndImport();
+                        if (error != null && context.mounted) {
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(SnackBar(content: Text(error)));
+                        }
+                      },
+                    ),
+                    ('断开设备', studio.isRunning ? controller.stop : null),
+                    ('退出', () => exit(0)),
+                  ],
+                ),
+                _MenuButton(
+                  label: '编辑',
+                  entries: <(String, VoidCallback?)>[
+                    (
+                      '关闭当前标签',
+                      opened.active == null
+                          ? null
+                          : () => ref
+                              .read(openedFilesProvider.notifier)
+                              .close(opened.active!),
+                    ),
+                    ('下一个标签', () => ref.read(openedFilesProvider.notifier).nextTab()),
+                    ('上一个标签', () => ref.read(openedFilesProvider.notifier).prevTab()),
+                  ],
+                ),
+                _MenuButton(
+                  label: '选择',
+                  entries: <(String, VoidCallback?)>[
+                    (
+                      '复制当前文件路径',
+                      opened.active == null
+                          ? null
+                          : () => Clipboard.setData(
+                              ClipboardData(text: opened.active!),
+                            ),
+                    ),
+                    (
+                      '打开文件所在目录',
+                      opened.active == null
+                          ? null
+                          : () => _openInExplorer(p.dirname(opened.active!)),
+                    ),
+                  ],
+                ),
+                _MenuButton(
+                  label: '查看',
+                  entries: <(String, VoidCallback?)>[
+                    ('放大字体', () => ref.read(editorFontSizeProvider.notifier).increase()),
+                    ('缩小字体', () => ref.read(editorFontSizeProvider.notifier).decrease()),
+                    ('重置字体', () => ref.read(editorFontSizeProvider.notifier).reset()),
+                    (
+                      '拆分预览',
+                      () => ref.read(splitPreviewProvider.notifier).toggle(),
+                    ),
+                    (
+                      '显示 Protocol Console',
+                      () => ref.read(showConsoleProvider.notifier).toggle(),
+                    ),
+                    (
+                      '日志等级: ${controller.logLevel.name.toUpperCase()}',
+                      () {
+                        final levels = LogLevel.values;
+                        final next = levels[
+                            (levels.indexOf(controller.logLevel) + 1) %
+                                levels.length];
+                        controller.setLogLevel(next);
+                      },
+                    ),
+                  ],
+                ),
+                _MenuButton(
+                  label: '转到',
+                  entries: <(String, VoidCallback?)>[
+                    ('下一个标签', () => ref.read(openedFilesProvider.notifier).nextTab()),
+                    ('上一个标签', () => ref.read(openedFilesProvider.notifier).prevTab()),
+                    ('重载 UI 预览', studio.isRunning ? controller.reloadUi : null),
+                  ],
+                ),
+                _MenuButton(
+                  label: '运行',
+                  entries: <(String, VoidCallback?)>[
+                    ('启动 Smart Light', () => startSmartLight(context, ref)),
+                    ('启动 Demo Light', () => ref.read(studioControllerProvider.notifier).start(DemoDevice())),
+                    ('重置设备', studio.isRunning ? controller.reset : null),
+                    ('断开', studio.isRunning ? controller.stop : null),
+                    ('UI Hot Reload', controller.toggleUiWatch),
+                  ],
+                ),
+                _MenuButton(
+                  label: '帮助',
+                  entries: <(String, VoidCallback?)>[
+                    (
+                      '关于 Device Studio',
+                      () => showDialog<void>(
+                        context: context,
+                        builder: (context) => const AboutDialog(
+                          applicationName: 'Device Studio',
+                          applicationVersion: 'V3',
+                          applicationLegalese:
+                              'Device UI Platform — 设备 UI 开发平台\n'
+                              '文档: docs/QUICKSTART.md',
+                        ),
+                      ),
+                    ),
+                    (
+                      '快速上手文档',
+                      () => showDialog<void>(
+                        context: context,
+                        builder: (context) => const AlertDialog(
+                          title: Text('快速上手'),
+                          content: Text(
+                            'docs/QUICKSTART.md\n'
+                            '跑 Studio / 设计 UI / 生成固件代码',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          // 工具栏行
+          SizedBox(
+            height: 30,
+            child: Row(
+              children: <Widget>[
+                const SizedBox(width: 4),
+                // 设备控制 (运行中显示)
+                if (studio.isRunning) ...<Widget>[
+                  IconButton(
+                    icon: const Icon(Icons.refresh, size: 16),
+                    tooltip: '重置设备',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: controller.reset,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.stop, size: 16),
+                    tooltip: '断开',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: controller.stop,
+                  ),
+                ],
+                // 编辑器字体缩放
+                IconButton(
+                  icon: const Icon(Icons.text_decrease, size: 16),
+                  tooltip: '缩小字体',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () =>
+                      ref.read(editorFontSizeProvider.notifier).decrease(),
+                ),
+                Consumer(
+                  builder: (context, ref, _) => Text(
+                    '${ref.watch(editorFontSizeProvider).round()}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.text_increase, size: 16),
+                  tooltip: '放大字体',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () =>
+                      ref.read(editorFontSizeProvider.notifier).increase(),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 在系统资源管理器中打开目录 (Windows Explorer / macOS Finder)。
+void _openInExplorer(String path) {
+  if (Platform.isWindows) {
+    Process.run('explorer', <String>[path]);
+  } else if (Platform.isMacOS) {
+    Process.run('open', <String>[path]);
+  }
+}
+
+/// 启动 Smart Light (运行菜单与设备卡片共用)。
+Future<void> startSmartLight(BuildContext context, WidgetRef ref) async {
+  final notifier = ref.read(studioControllerProvider.notifier);
+  final pkg = await notifier.loadSmartLightPkg();
+  final ok = await notifier.start(VirtualLight(uiPkgBytes: pkg));
+  if (ok) {
+    notifier.startUiWatch(
+      StudioController.smartLightUiDir,
+      StudioController.smartLightPkgPath,
+    );
+  }
+}
+
+class _MenuButton extends StatelessWidget {
+  const _MenuButton({required this.label, required this.entries});
+
+  final String label;
+
+  /// (显示文本, 动作)；动作 null = 禁用项。
+  final List<(String, VoidCallback?)> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<int>(
+      tooltip: '',
+      position: PopupMenuPosition.under,
+      onSelected: (index) => entries[index].$2?.call(),
+      itemBuilder: (context) => <PopupMenuItem<int>>[
+        for (var i = 0; i < entries.length; i++)
+          PopupMenuItem<int>(
+            value: i,
+            enabled: entries[i].$2 != null,
+            height: 32,
+            child: Text(entries[i].$1, style: const TextStyle(fontSize: 13)),
+          ),
+      ],
+      child: _MenuLabel(label),
+    );
+  }
+}
+
+/// 菜单栏标签样式。
+class _MenuLabel extends StatelessWidget {
+  const _MenuLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      child: Text(text, style: const TextStyle(fontSize: 13)),
     );
   }
 }
@@ -333,7 +597,7 @@ class _DeviceListPanel extends ConsumerWidget {
   ) async {
     switch (action) {
       case _ListAction.create:
-        await _showCreateDeviceDialog(context, ref);
+        await showCreateDeviceDialog(context, ref);
       case _ListAction.open:
         // 原生目录选择器 → 选中的设备目录加入列表
         final error =
@@ -380,29 +644,6 @@ class _DeviceListPanel extends ConsumerWidget {
     }
   }
 
-  /// 新建设备弹窗：填写设备 ID / 名称 / 型号 → `devices/<id>/`。
-  Future<void> _showCreateDeviceDialog(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
-    final created = await showDialog<({String id, String name, String model})>(
-      context: context,
-      builder: (context) => const _CreateDeviceDialog(),
-    );
-    if (created == null || !context.mounted) {
-      return;
-    }
-    final error = ref.read(deviceListProvider.notifier).createDevice(
-          id: created.id,
-          name: created.name,
-          model: created.model,
-        );
-    if (error != null && context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error)));
-    }
-  }
-
   Widget _deviceCard(
     BuildContext context,
     WidgetRef ref, {
@@ -427,6 +668,26 @@ class _DeviceListPanel extends ConsumerWidget {
 }
 
 /// 列表头部 ⋮ 菜单动作。
+/// 新建设备弹窗 (菜单栏与设备列表共用)。
+Future<void> showCreateDeviceDialog(BuildContext context, WidgetRef ref) async {
+  final created = await showDialog<({String id, String name, String model})>(
+    context: context,
+    builder: (context) => const _CreateDeviceDialog(),
+  );
+  if (created == null || !context.mounted) {
+    return;
+  }
+  final error = ref.read(deviceListProvider.notifier).createDevice(
+        id: created.id,
+        name: created.name,
+        model: created.model,
+      );
+  if (error != null && context.mounted) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(error)));
+  }
+}
+
 enum _ListAction { create, open }
 
 /// 设备卡片 ⋮ 菜单动作。
@@ -540,18 +801,34 @@ class _CenterPanel extends ConsumerWidget {
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
                 )
-              : _buildContent(studio, opened, split),
+              : _buildContent(
+                  studio,
+                  opened,
+                  split,
+                  fontSize: ref.watch(editorFontSizeProvider),
+                ),
         ),
-        const Divider(height: 1),
-        _ProtocolConsole(lines: studio.protocolLog),
+        if (ref.watch(showConsoleProvider)) ...<Widget>[
+          const Divider(height: 1),
+          _ProtocolConsole(lines: studio.protocolLog),
+        ],
       ],
     );
   }
 
-  Widget _buildContent(StudioState studio, OpenedFilesState opened, bool split) {
+  Widget _buildContent(
+    StudioState studio,
+    OpenedFilesState opened,
+    bool split, {
+    required double fontSize,
+  }) {
     final editor = opened.active == null
         ? const Center(child: Text('从左侧文件树选择文件'))
-        : SourceEditor(key: ValueKey<String>(opened.active!), path: opened.active!);
+        : SourceEditor(
+            key: ValueKey<String>(opened.active!),
+            path: opened.active!,
+            fontSize: fontSize,
+          );
     if (!split) {
       return editor;
     }

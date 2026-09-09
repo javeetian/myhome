@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:myhome/device/demo_device.dart';
 import 'package:myhome/device/virtual_light.dart';
@@ -241,7 +242,7 @@ void main() {
         exeDir: appBundle,
         cwd: project, // CWD 即项目根
       );
-      expect(resolved, '${project.path}/devices/smart_light/ui');
+      expect(resolved, p.join(project.path, 'devices/smart_light/ui'));
     });
 
     test('相对路径：CWD 是沙箱容器 → 从可执行文件向上找到项目根 (macOS)', () {
@@ -250,7 +251,7 @@ void main() {
         exeDir: appBundle,
         cwd: sandbox, // macOS 沙箱 CWD ≠ 项目根
       );
-      expect(resolved, '${project.path}/devices/smart_light/ui');
+      expect(resolved, p.join(project.path, 'devices/smart_light/ui'));
     });
 
     test('绝对路径直接返回 (测试注入场景)', () {

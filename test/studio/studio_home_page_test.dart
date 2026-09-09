@@ -254,7 +254,7 @@ events: []
     await tester.pumpAndSettle();
     final treeSize = tester.getSize(
       find.ancestor(
-        of: find.text('文件'),
+        of: find.text('文件树'),
         matching: find.byType(SizedBox),
       ).first,
     );

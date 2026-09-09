@@ -55,8 +55,14 @@ events: []
     );
     await tester.pump();
 
-    // 标题与三栏
-    expect(find.text('Device Studio'), findsOneWidget);
+    // 菜单栏与三栏
+    expect(find.text('文件'), findsOneWidget);
+    expect(find.text('编辑'), findsOneWidget);
+    expect(find.text('选择'), findsOneWidget);
+    expect(find.text('查看'), findsOneWidget);
+    expect(find.text('转到'), findsOneWidget);
+    expect(find.text('运行'), findsOneWidget);
+    expect(find.text('帮助'), findsOneWidget);
     expect(find.text('设备'), findsOneWidget);
     expect(find.text('Inspector'), findsOneWidget);
     expect(find.text('Protocol Console'), findsOneWidget);

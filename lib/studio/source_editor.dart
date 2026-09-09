@@ -22,9 +22,16 @@ import 'package:path/path.dart' as p;
 /// 保存写入文件后，Studio 的 UI Watch (Phase 37) 自动重打包并重载
 /// WebView 预览，实现"改源码立刻显示结果"。二进制文件显示占位提示。
 class SourceEditor extends StatefulWidget {
-  const SourceEditor({super.key, required this.path});
+  const SourceEditor({
+    super.key,
+    required this.path,
+    this.fontSize = 12,
+  });
 
   final String path;
+
+  /// 编辑器字体大小 (菜单栏工具栏调整，由调用方从 provider 读取传入)。
+  final double fontSize;
 
   @override
   State<SourceEditor> createState() => _SourceEditorState();
@@ -154,9 +161,9 @@ class _SourceEditorState extends State<SourceEditor> {
                   controller: _controller,
                   expands: true,
                   onChanged: _onChanged,
-                  textStyle: const TextStyle(
+                  textStyle: TextStyle(
                     fontFamily: 'monospace',
-                    fontSize: 12,
+                    fontSize: widget.fontSize,
                     height: 1.5,
                   ),
                   padding: const EdgeInsets.all(12),

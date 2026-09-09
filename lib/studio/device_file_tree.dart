@@ -35,7 +35,7 @@ class _DeviceFileTreeState extends State<DeviceFileTree> {
           padding: const EdgeInsets.fromLTRB(12, 8, 4, 0),
           child: Row(
             children: <Widget>[
-              Text('文件', style: Theme.of(context).textTheme.titleSmall),
+              Text('文件树', style: Theme.of(context).textTheme.titleSmall),
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.refresh, size: 16),

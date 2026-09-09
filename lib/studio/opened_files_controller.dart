@@ -53,6 +53,28 @@ class OpenedFilesController extends Notifier<OpenedFilesState> {
   /// 切换激活标签。
   void setActive(String path) =>
       state = OpenedFilesState(paths: state.paths, active: path);
+
+  /// 下一个标签 (循环)。
+  void nextTab() {
+    final paths = state.paths;
+    final active = state.active;
+    if (paths.length < 2 || active == null) {
+      return;
+    }
+    final index = (paths.indexOf(active) + 1) % paths.length;
+    setActive(paths[index]);
+  }
+
+  /// 上一个标签 (循环)。
+  void prevTab() {
+    final paths = state.paths;
+    final active = state.active;
+    if (paths.length < 2 || active == null) {
+      return;
+    }
+    final index = (paths.indexOf(active) - 1 + paths.length) % paths.length;
+    setActive(paths[index]);
+  }
 }
 
 final openedFilesProvider =

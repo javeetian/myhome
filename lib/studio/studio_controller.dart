@@ -108,6 +108,9 @@ class StudioController extends Notifier<StudioState> {
   String? _uiWatchDir;
   String? _uiWatchOut;
 
+  /// 当前会话日志实例 (菜单栏日志等级设置即时生效)。
+  AppLog? _log;
+
   @override
   StudioState build() {
     ref.onDispose(_disposeResources);
@@ -118,6 +121,7 @@ class StudioController extends Notifier<StudioState> {
   Future<bool> start(ProtocolDevice device, {String? deviceDir}) async {
     await stop();
     final log = AppLog(level: LogLevel.trace, output: _appendLog);
+    _log = log;
     // 故障注入包装 (Phase 21)：Studio 面板操控
     final injector = FaultInjector(device);
     injector.onDisconnectRequested = () {
@@ -329,8 +333,43 @@ class StudioController extends Notifier<StudioState> {
     _uiDebounce = null;
     _uiWatchSub?.cancel();
     _uiWatchSub = null;
-    _uiWatchDir = null;
-    _uiWatchOut = null;
+    // 路径保留：菜单栏可随时重新开启
+  }
+
+  /// 菜单栏：日志等级即时切换 (§32 运行时调整)。
+  LogLevel get logLevel => _log?.level ?? LogLevel.trace;
+
+  void setLogLevel(LogLevel level) {
+    _log?.level = level;
+    _appendLog('INFO 日志等级 → ${level.name.toUpperCase()}');
+  }
+
+  /// 菜单栏：重载 UI 预览 (reloadCount++ → WebView 重载)。
+  void reloadUi() {
+    if (state.client == null) {
+      return;
+    }
+    _appendLog('INFO UI 预览手动重载');
+    state = state.copyWith(reloadCount: state.reloadCount + 1);
+  }
+
+  /// 菜单栏：UI Hot Reload 开关。
+  bool get isUiWatchRunning => _uiWatchSub != null;
+
+  void toggleUiWatch() {
+    if (isUiWatchRunning) {
+      stopUiWatch();
+      _appendLog('INFO UI Hot Reload 已关闭');
+      return;
+    }
+    final dir = _uiWatchDir;
+    final out = _uiWatchOut;
+    if (dir != null && out != null) {
+      startUiWatch(dir, out);
+      _appendLog('INFO UI Hot Reload 已开启');
+    } else {
+      _appendLog('WARN 无 UI 源目录 (设备未提供 UI)');
+    }
   }
 
   /// 重新打包 UI → 覆盖缓存 → 通知 WebView 重载 (reloadCount++)。
