@@ -1,0 +1,126 @@
+{
+  "@@locale": "zh",
+  "@@last_modified": "2026-09-10",
+
+  "settings": "设置",
+  "addDevice": "添加设备",
+  "homeEmptyHint": "还没有设备，点击上方按钮添加",
+  "removeDevice": "移除",
+  "removeDeviceConfirm": "确定从列表中移除「{name}」？",
+  "@removeDeviceConfirm": {
+    "description": "移除历史设备的确认文案",
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "cancel": "取消",
+  "lastConnected": "上次连接：{time}",
+  "@lastConnected": {
+    "description": "历史设备卡片的最近连接时间",
+    "placeholders": {
+      "time": {"type": "String"}
+    }
+  },
+  "unknownError": "未知错误",
+  "sessionNotEstablished": "设备会话未建立",
+
+  "scanTitle": "添加设备",
+  "scanPermissionDenied": "缺少蓝牙权限，请在系统设置中授权",
+  "scanFailed": "扫描失败: {error}",
+  "@scanFailed": {
+    "description": "开始扫描失败时的提示",
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "connectFailed": "连接失败: {error}",
+  "@connectFailed": {
+    "description": "连接设备失败时的提示",
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "demoFailed": "演示启动失败: {error}",
+  "@demoFailed": {
+    "description": "演示设备启动失败时的提示",
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "stopScan": "停止扫描",
+  "startScan": "开始扫描",
+  "demoCardTitle": "Mock 设备演示",
+  "demoCardSubtitle": "无需真实硬件，模拟完整交互链路",
+  "scanResultCount": "扫描结果 ({count})",
+  "@scanResultCount": {
+    "description": "扫描结果数量标题",
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "scanEmpty": "暂未发现设备，点击右下角开始扫描",
+  "unknownDevice": "未知设备",
+  "blePoweredOff": "蓝牙未开启",
+  "bleUnauthorized": "蓝牙权限未授权，请在系统设置中开启",
+  "bleLocationDisabled": "定位服务未开启",
+  "bleUnsupported": "当前平台不支持 BLE",
+
+  "developerMode": "开发者模式",
+  "disconnectAndBack": "断开并返回",
+  "uiServerNotStarted": "UI 服务未启动",
+  "uiServerStartFailed": "UI Server 启动失败: {error}",
+  "@uiServerStartFailed": {
+    "description": "UI Server 启动失败时抛出的错误",
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "reconnecting": "连接中断，正在重连…",
+  "reconnected": "已重新连接",
+  "deviceError": "设备异常: {error}",
+  "@deviceError": {
+    "description": "设备异常断开时的提示",
+    "placeholders": {
+      "error": {"type": "String"}
+    }
+  },
+  "deviceDisconnected": "设备已断开",
+
+  "devPanelTitle": "开发者模式 (§33)",
+  "devDeviceId": "设备 ID",
+  "devConnectionState": "连接状态",
+  "devProtocolVersion": "协议版本",
+  "devDeviceType": "设备类型",
+  "devFirmwareVersion": "固件版本",
+  "devUiVersion": "UI 版本",
+  "devCapabilities": "能力",
+  "devTxBytes": "TX 字节",
+  "devRxBytes": "RX 字节",
+  "devRetries": "重试次数",
+  "devCommandCount": "命令数",
+  "devLatencyP50": "命令延迟 P50",
+  "devLatencyP95": "命令延迟 P95",
+  "devLatencyP99": "命令延迟 P99",
+  "devLastError": "最近错误",
+
+  "phaseDisconnected": "未连接",
+  "phaseScanning": "扫描中",
+  "phaseConnecting": "连接中",
+  "phaseDiscovering": "发现服务中",
+  "phaseNegotiating": "协商中",
+  "phaseHandshaking": "握手中",
+  "phaseLoadingUi": "加载 UI 中",
+  "phaseSyncingState": "同步状态中",
+  "phaseConnected": "已连接",
+  "phaseDisconnecting": "断开中",
+  "phaseReconnecting": "重连中",
+  "phaseError": "错误",
+
+  "language": "语言",
+  "followSystem": "跟随系统",
+  "languageZh": "简体中文",
+  "languageEn": "English",
+  "theme": "主题",
+  "themeLight": "浅色主题",
+  "themeDark": "深色主题"
+}

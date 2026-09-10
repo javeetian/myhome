@@ -1,51 +1,26 @@
-import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:myhome/app/app.dart';
-import 'package:myhome/ble/ble_scanner.dart';
-import 'package:myhome/providers/ble_provider.dart';
-
-/// 测试用假扫描器。
-///
-/// 不构造 FlutterReactiveBle 实例：FRB 构造函数内部会启动异步状态轮询
-/// Timer，在 widget 测试结束时仍然挂起会导致测试失败（测试宿主机 macOS
-/// 上 `Platform.isMacOS == true`，会进入真实实现分支）。
-class FakeBleScanner extends BleScanner {
-  @override
-  Stream<BleStatus> get statusStream =>
-      Stream<BleStatus>.value(BleStatus.unsupported);
-
-  @override
-  Stream<List<DiscoveredDevice>> get scanResults =>
-      Stream<List<DiscoveredDevice>>.value(const <DiscoveredDevice>[]);
-
-  @override
-  Stream<bool> get isScanning => Stream<bool>.value(false);
-
-  @override
-  Future<void> startScan() async {}
-
-  @override
-  Future<void> stopScan() async {}
-
-  @override
-  void dispose() {}
-}
+import 'package:myhome/l10n/app_localizations.dart';
+import 'package:myhome/ui/pages/home_page.dart';
 
 void main() {
-  testWidgets('App 启动后显示设备扫描页', (WidgetTester tester) async {
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          bleScannerProvider.overrideWithValue(FakeBleScanner()),
-        ],
-        child: const MyApp(),
-      ),
-    );
-    await tester.pump();
+  testWidgets('App 启动后显示主界面 (设置/添加/空状态)', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await tester.pumpWidget(const ProviderScope(child: MyApp()));
+    await tester.pumpAndSettle();
 
-    expect(find.text('设备扫描'), findsOneWidget);
-    expect(find.text('Mock 设备演示'), findsOneWidget);
+    final l10n =
+        AppLocalizations.of(tester.element(find.byType(HomePage)))!;
+    // 标题
+    expect(find.text('MyHome'), findsOneWidget);
+    // 左上设置、右上添加
+    expect(find.byIcon(Icons.settings), findsOneWidget);
+    // 空状态：右上角 + 中央大按钮两个加号
+    expect(find.byIcon(Icons.add), findsNWidgets(2));
+    expect(find.text(l10n.homeEmptyHint), findsOneWidget);
   });
 }

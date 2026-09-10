@@ -1,0 +1,5 @@
+# gen_l10n 配置 (Flutter 官方本地化方案)。
+# 新增语言：在 lib/l10n 下加一个 ARB 文件即可，如 app_ja.arb。
+arb-dir: lib/l10n
+template-arb-file: app_zh.arb
+output-localization-file: app_localizations.dart

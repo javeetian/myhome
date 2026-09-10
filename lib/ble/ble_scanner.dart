@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
+import 'ble_constants.dart';
+
 /// BLE 扫描器：flutter_reactive_ble 的薄封装。
 ///
 /// FRB 的特性：停止扫描 = 取消流订阅。因此这里维护自己的订阅句柄与扫描状态流。
@@ -53,6 +55,7 @@ class BleScanner {
   Stream<bool> get isScanning => _scanning.stream;
 
   /// 开始扫描 (15 秒后自动停止)。
+  /// 只扫描广播 [BleConstants.serviceUuid] 的目标设备 (WORK_V2 §6.3)。
   Future<void> startScan() async {
     if (!_isSupported) {
       throw StateError('当前平台不支持 BLE');
@@ -62,11 +65,16 @@ class BleScanner {
     _results.add(const <DiscoveredDevice>[]);
     _sub = _ble!
         .scanForDevices(
-          withServices: const <Uuid>[],
+          withServices: <Uuid>[Uuid.parse(BleConstants.serviceUuid)],
           scanMode: ScanMode.balanced,
         )
         .listen(
           (device) {
+            // 系统层过滤之外再按广播内容过滤一次：部分平台 (如 Android)
+            // 的 service 过滤依赖广播包，扫描响应命中的情况靠这里兜底。
+            if (!BleScanner.matchesTarget(device)) {
+              return;
+            }
             _seen[device.id] = device;
             _results.add(List<DiscoveredDevice>.unmodifiable(_seen.values));
           },
@@ -74,6 +82,25 @@ class BleScanner {
         );
     _scanning.add(true);
     _timer = Timer(const Duration(seconds: 15), stopScan);
+  }
+
+  /// 目标设备判定：广播/扫描响应中的服务 UUID 与 [BleConstants.serviceUuid]
+  /// 匹配。兼容 16/32 位短 UUID 的广播形式 (按 BLE 规范零扩展到
+  /// xxxxxxxx-0000-1000-8000-00805f9b34fb，0xFFE0 与
+  /// 0000ffe0-0000-1000-8000-00805f9b34fb 等价)。
+  static bool matchesTarget(DiscoveredDevice device) {
+    final target = BleConstants.serviceUuid.replaceAll('-', '').toLowerCase();
+    bool matches(Uuid uuid) {
+      final hex = uuid.toString().replaceAll('-', '').toLowerCase();
+      // 16/32 位短 UUID：零扩展为 32 位后拼接 BLE 基 UUID。
+      final full = hex.length == 4 || hex.length == 8
+          ? '${hex.padLeft(8, '0')}-0000-1000-8000-00805f9b34fb'
+          : uuid.toString();
+      return full.replaceAll('-', '').toLowerCase() == target;
+    }
+
+    return device.serviceUuids.any(matches) ||
+        device.serviceData.keys.any(matches);
   }
 
   Future<void> stopScan() async {

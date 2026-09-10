@@ -54,6 +54,10 @@ dependencies:
   flutter_code_editor: ^0.3.5
   highlight: ^0.7.0
   flutter_highlight: ^0.7.0
+  intl: ^0.20.3
+  shared_preferences: ^2.5.5
+  flutter_localizations:
+    sdk: flutter
 
 dev_dependencies:
   flutter_test:
@@ -71,6 +75,8 @@ dev_dependencies:
 
 # The following section is specific to Flutter packages.
 flutter:
+  # 开启本地化代码生成 (gen_l10n，配置见 l10n.yaml)。
+  generate: true
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

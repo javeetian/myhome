@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../device/connection_phase.dart';
+import '../../l10n/app_localizations.dart';
 import '../../providers/device_session_provider.dart';
 import '../../providers/ui_runtime_provider.dart';
 import '../../ui_runtime/webview_host.dart';
@@ -54,19 +55,20 @@ class _DevicePageState extends ConsumerState<DevicePage> {
 
   /// 设备断开/异常/重连 → 状态机处理 (§20, Phase 22)。
   void _onPhaseChanged(ConnectionPhase phase) {
+    final l10n = AppLocalizations.of(context)!;
     if (_leaving) {
       return;
     }
     if (phase == ConnectionPhase.reconnecting) {
       _wasReconnecting = true;
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('连接中断，正在重连…')));
+          .showSnackBar(SnackBar(content: Text(l10n.reconnecting)));
       return;
     }
     if (phase == ConnectionPhase.connected && _wasReconnecting) {
       _wasReconnecting = false;
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('已重新连接')));
+          .showSnackBar(SnackBar(content: Text(l10n.reconnected)));
       unawaited(_restartUiServer());
       return;
     }
@@ -76,8 +78,8 @@ class _DevicePageState extends ConsumerState<DevicePage> {
     }
     _leaving = true;
     final message = phase == ConnectionPhase.error
-        ? '设备异常: ${ref.read(deviceSessionProvider).error}'
-        : '设备已断开';
+        ? l10n.deviceError(ref.read(deviceSessionProvider).error ?? '')
+        : l10n.deviceDisconnected;
     ref.read(uiServerControllerProvider.notifier).stop();
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
@@ -86,6 +88,7 @@ class _DevicePageState extends ConsumerState<DevicePage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     ref.listen(connectionPhaseProvider, (previous, next) {
       _onPhaseChanged(next);
     });
@@ -96,7 +99,7 @@ class _DevicePageState extends ConsumerState<DevicePage> {
         actions: <Widget>[
           IconButton(
             icon: const Icon(Icons.bug_report),
-            tooltip: '开发者模式',
+            tooltip: l10n.developerMode,
             onPressed: () => showModalBottomSheet<void>(
               context: context,
               builder: (_) => const DeveloperPanel(),
@@ -104,13 +107,13 @@ class _DevicePageState extends ConsumerState<DevicePage> {
           ),
           IconButton(
             icon: const Icon(Icons.close),
-            tooltip: '断开并返回',
+            tooltip: l10n.disconnectAndBack,
             onPressed: _disconnect,
           ),
         ],
       ),
       body: entryUrl == null
-          ? const Center(child: Text('UI 服务未启动'))
+          ? Center(child: Text(l10n.uiServerNotStarted))
           : WebViewHost(
               key: ValueKey<String>(entryUrl), // 重连后 entryUrl 变化 → 重建重载
               url: entryUrl,
