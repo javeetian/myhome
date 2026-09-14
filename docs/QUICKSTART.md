@@ -80,6 +80,7 @@ flutter build macos --release      # macOS App (需 Mac 机器)
 
 ```bash
 flutter build windows --release -t lib/studio/studio_main.dart   # Windows Studio
+dart run inno_bundle --release --build-args="-tlib/studio/studio_main.dart"   # Windows Studio Installer
 flutter build macos --release -t lib/studio/studio_main.dart      # macOS Studio
 ```
 

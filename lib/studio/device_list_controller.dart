@@ -54,8 +54,23 @@ class DeviceListController extends Notifier<List<DeviceDirInfo>> {
   /// 目录选择器 (测试可注入；默认 file_picker 原生目录选择)。
   final Future<String?> Function()? picker;
 
-  Directory get _root =>
-      _rootOverride ?? Directory(StudioController.resolvePath('devices'));
+  /// 用户选择的工作目录 (持久化；null = 用默认值)。
+  String? _workspacePath;
+
+  /// 默认工作目录：开发模式用项目 devices/；
+  /// 发布模式用安装目录 workspace (C:\Program Files\myhome\workspace)。
+  static String get _defaultWorkspace {
+    final projectDevices = StudioController.resolvePath('devices');
+    if (Directory(projectDevices).existsSync()) {
+      return projectDevices;
+    }
+    return r'C:\Program Files\myhome\workspace';
+  }
+
+  /// 当前工作目录 (设备根，新建/扫描都在此目录下)。
+  String get workspacePath => _workspacePath ?? _defaultWorkspace;
+
+  Directory get _root => _rootOverride ?? Directory(workspacePath);
 
   /// `.removed` 标记文件名。
   static const String removedMarker = '.removed';
@@ -76,7 +91,57 @@ class DeviceListController extends Notifier<List<DeviceDirInfo>> {
   List<DeviceDirInfo> build() {
     _loadImports();
     _loadOrder();
+    _loadConfig();
     return _scan();
+  }
+
+  /// 配置持久化：%APPDATA%/myhome/studio_config.json (安装目录可能不可写)。
+  File get _configFile => File(p.join(
+        Platform.environment['APPDATA'] ?? '.',
+        'myhome',
+        'studio_config.json',
+      ));
+
+  void _loadConfig() {
+    final file = _configFile;
+    if (!file.existsSync()) {
+      return;
+    }
+    try {
+      final data = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      final workspace = data['workspace'];
+      if (workspace is String && workspace.isNotEmpty) {
+        _workspacePath = workspace;
+      }
+    } catch (_) {
+      // 坏配置：忽略
+    }
+  }
+
+  void _saveConfig() {
+    final file = _configFile;
+    file.parent.createSync(recursive: true);
+    file.writeAsStringSync(jsonEncode(<String, dynamic>{
+      'workspace': _workspacePath,
+    }));
+  }
+
+  /// 设置工作目录并刷新列表。
+  void setWorkspacePath(String path) {
+    _workspacePath = path;
+    _saveConfig();
+    refresh();
+  }
+
+  /// 弹出目录选择器并设为工作目录。返回 null = 成功/取消；非 null = 错误。
+  Future<String?> pickWorkspace() async {
+    final pick = picker ?? () => FilePicker.getDirectoryPath();
+    final dir = await pick();
+    if (dir == null || dir.isEmpty) {
+      return null; // 用户取消
+    }
+    setWorkspacePath(dir);
+    return null;
   }
 
   void _loadOrder() {

@@ -690,14 +690,15 @@ enum _ListAction { create, open }
 enum _DeviceAction { remove, delete }
 
 /// 新建设备弹窗 (WORK_V3 §29 扩展)：`devices/<id>/device.yaml` 骨架。
-class _CreateDeviceDialog extends StatefulWidget {
+class _CreateDeviceDialog extends ConsumerStatefulWidget {
   const _CreateDeviceDialog();
 
   @override
-  State<_CreateDeviceDialog> createState() => _CreateDeviceDialogState();
+  ConsumerState<_CreateDeviceDialog> createState() =>
+      _CreateDeviceDialogState();
 }
 
-class _CreateDeviceDialogState extends State<_CreateDeviceDialog> {
+class _CreateDeviceDialogState extends ConsumerState<_CreateDeviceDialog> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _id = TextEditingController();
   final TextEditingController _name = TextEditingController();
@@ -711,8 +712,21 @@ class _CreateDeviceDialogState extends State<_CreateDeviceDialog> {
     super.dispose();
   }
 
+  Future<void> _pickWorkspace() async {
+    final notifier = ref.read(deviceListProvider.notifier);
+    final error = await notifier.pickWorkspace();
+    if (error != null && mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
+    }
+    if (mounted) {
+      setState(() {}); // 刷新工作目录显示
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final workspace = ref.watch(deviceListProvider.notifier).workspacePath;
     return AlertDialog(
       title: const Text('新建设备'),
       content: Form(
@@ -744,6 +758,25 @@ class _CreateDeviceDialogState extends State<_CreateDeviceDialog> {
             TextFormField(
               controller: _model,
               decoration: const InputDecoration(labelText: '型号'),
+            ),
+            const SizedBox(height: 8),
+            // 工作目录：新建的设备目录在此目录下创建
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '工作目录: $workspace',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _pickWorkspace,
+                  icon: const Icon(Icons.folder_open, size: 16),
+                  label: const Text('选择'),
+                ),
+              ],
             ),
           ],
         ),
