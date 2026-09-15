@@ -79,10 +79,23 @@ flutter build macos --release      # macOS App (需 Mac 机器)
 ## 3.3 Device Studio（PC 开发工具）
 
 ```bash
-flutter build windows --release -t lib/studio/studio_main.dart   # Windows Studio
-dart run inno_bundle --release --build-args="-tlib/studio/studio_main.dart"   # Windows Studio Installer
-flutter build macos --release -t lib/studio/studio_main.dart      # macOS Studio
+# 绿色版：整个 Release 目录拷贝即用
+flutter build windows --release -t lib/studio/studio_main.dart
+
+# 安装包（Inno Setup，配置见 pubspec.yaml 的 inno_bundle 段）
+dart run inno_bundle --release --build-args="-tlib/studio/studio_main.dart"
+
+# macOS
+flutter build macos --release -t lib/studio/studio_main.dart
 ```
+
+**inno_bundle 说明**：
+- 需要先装 [Inno Setup 6](https://jrsoftware.org/isdl.php)（编译器，装一次）
+- 首次使用：`dart run inno_bundle setup`（生成随机 GUID 与 publisher，写入 pubspec.yaml，
+  本仓库已配置好，新克隆的环境需执行一次）
+- 产物：`build/windows/x64/runner/Release/myhome_installer.exe`（安装包）
+- 安装后工作目录：`C:\Program Files\myhome\`，其中 `workspace/` 为设备工作目录
+  （Studio 新建设备的默认位置，可在新建对话框里改）
 
 ## 3.4 发布要点
 
