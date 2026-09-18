@@ -72,6 +72,49 @@ int device_json_get_float(const char* json, const char* key, float* out) {
     return 0;
 }
 
+int device_json_get_raw(const char* json, const char* key,
+                        const char** out_ptr, uint16_t* out_len) {
+    const char* pos = find_value(json, key);
+    if (pos == NULL) {
+        return -1;
+    }
+    /* 仅处理对象/数组 (命令的 params 等) */
+    const char open = *pos;
+    if (open != '{' && open != '[') {
+        return -1;
+    }
+    const char close = (open == '{') ? '}' : ']';
+    int depth = 0;
+    int in_string = 0;
+    const char* cur = pos;
+    while (*cur != '\0') {
+        const char c = *cur;
+        if (in_string) {
+            if (c == '\\') { /* 跳过转义字符 */
+                cur++;
+                if (*cur == '\0') {
+                    break;
+                }
+            } else if (c == '"') {
+                in_string = 0;
+            }
+        } else if (c == '"') {
+            in_string = 1;
+        } else if (c == open) {
+            depth++;
+        } else if (c == close) {
+            depth--;
+            if (depth == 0) {
+                *out_ptr = pos;
+                *out_len = (uint16_t)(cur - pos + 1);
+                return 0;
+            }
+        }
+        cur++;
+    }
+    return -1; /* 括号不匹配 */
+}
+
 int device_json_get_string(const char* json, const char* key,
                            char* out, size_t out_cap) {
     const char* pos = find_value(json, key);

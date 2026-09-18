@@ -17,4 +17,12 @@ int device_json_get_float(const char* json, const char* key, float* out);
 int device_json_get_string(const char* json, const char* key,
                            char* out, size_t out_cap);
 
+/**
+ * 取原始值子串 (不复制)：用于对象/数组字段 (如命令的 params)。
+ * 成功时 *out_ptr 指向 [json] 内部，*out_len 为子串长度 (含首尾括号)；
+ * 调用方保证 json 生命周期内有效。返回 0 = 成功。
+ */
+int device_json_get_raw(const char* json, const char* key,
+                        const char** out_ptr, uint16_t* out_len);
+
 #endif /* DEVICE_JSON_H */

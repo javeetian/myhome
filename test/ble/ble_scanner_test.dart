@@ -26,29 +26,29 @@ void main() {
   test('广播 128 位服务 UUID 命中', () {
     expect(
       BleScanner.matchesTarget(device(serviceUuids: <String>[
-        '0000ffe0-0000-1000-8000-00805f9b34fb',
+        '0000fff0-0000-1000-8000-00805f9b34fb',
       ])),
       isTrue,
     );
   });
 
-  test('16 位短 UUID (0xFFE0) 等价命中', () {
+  test('16 位短 UUID (0xFFF0) 等价命中', () {
     expect(
-      BleScanner.matchesTarget(device(serviceUuids: <String>['ffe0'])),
+      BleScanner.matchesTarget(device(serviceUuids: <String>['fff0'])),
       isTrue,
     );
   });
 
   test('32 位短 UUID 等价命中', () {
     expect(
-      BleScanner.matchesTarget(device(serviceUuids: <String>['0000ffe0'])),
+      BleScanner.matchesTarget(device(serviceUuids: <String>['0000fff0'])),
       isTrue,
     );
   });
 
   test('serviceData 中的 UUID 命中', () {
     expect(
-      BleScanner.matchesTarget(device(serviceDataUuids: <String>['ffe0'])),
+      BleScanner.matchesTarget(device(serviceDataUuids: <String>['fff0'])),
       isTrue,
     );
   });

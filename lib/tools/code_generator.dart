@@ -26,6 +26,7 @@ class CodeGenerator {
         'c/device_api.c': _apiC(def),
         'c/device_commands.c': _commandsC(def),
         'c/device_state.h': _stateHeader(def),
+        'c/device_info.h': _deviceInfo(def),
         'dart/device_api.dart': _dartApi(def),
         'simulator/virtual_device.dart': _simulator(def),
         'manifest.json': _manifest(def),
@@ -42,6 +43,7 @@ class CodeGenerator {
       ..writeln(' * device_api.h 声明的函数 (操作真实硬件, WORK_V3 §45)。')
       ..writeln(' */')
       ..writeln('#include "device_api.h"')
+      ..writeln('#include "device_json.h"')
       ..writeln('#include <string.h>')
       ..writeln()
       ..writeln('/* §10.5 错误码 */')
@@ -175,6 +177,33 @@ class CodeGenerator {
       ..writeln('void device_publish_event(const char* name, const char* json);')
       ..writeln()
       ..writeln('#endif /* DEVICE_API_H */');
+    return buffer.toString();
+  }
+
+  /// c/device_info.h：设备元信息 (协议运行时握手/状态上报使用)。
+  static String _deviceInfo(DeviceDefinition def) {
+    final buffer = StringBuffer()
+      ..writeln('/** Auto-generated. 设备元信息 (HELLO_ACK / UI manifest 对齐, §39)。 */')
+      ..writeln('#ifndef DEVICE_INFO_H')
+      ..writeln('#define DEVICE_INFO_H')
+      ..writeln()
+      ..writeln('#define DEVICE_TYPE             "${def.id}"')
+      ..writeln('#define DEVICE_MODEL            "${def.model}"')
+      ..writeln('#define DEVICE_PROTOCOL_VERSION ${def.protocolVersion}')
+      ..writeln('#define DEVICE_API_VERSION      ${def.apiVersion}')
+      ..writeln('#define DEVICE_UI_VERSION       "0.1.0"')
+      ..writeln()
+      ..writeln('/* 能力列表 (状态键, §25/§26)：用于 HELLO_ACK */')
+      ..writeln('static const char* const DEVICE_CAPABILITIES[] = {');
+    final keys = def.state.keys.toList();
+    for (final key in keys) {
+      buffer.writeln('    "$key",');
+    }
+    buffer
+      ..writeln('};')
+      ..writeln('#define DEVICE_CAPABILITY_COUNT ${keys.length}')
+      ..writeln()
+      ..writeln('#endif /* DEVICE_INFO_H */');
     return buffer.toString();
   }
 

@@ -45,13 +45,14 @@ events:
 ''');
   });
 
-  test('生成产物齐全 (§41 七件套)', () {
+  test('生成产物齐全 (§41 八件套)', () {
     final files = CodeGenerator.generate(def);
     expect(files.keys.toSet(), <String>{
       'c/device_api.h',
       'c/device_api.c',
       'c/device_commands.c',
       'c/device_state.h',
+      'c/device_info.h',
       'dart/device_api.dart',
       'simulator/virtual_device.dart',
       'manifest.json',
@@ -89,6 +90,21 @@ events:
     expect(state, contains('uint32_t version;'));
     expect(state, contains('bool power;'));
     expect(state, contains('uint8_t brightness;'));
+  });
+
+  test('device_info.h：设备元信息 + 能力列表', () {
+    final info = CodeGenerator.generate(def)['c/device_info.h']!;
+    expect(info, contains('#define DEVICE_TYPE             "smart_light"'));
+    expect(info, contains('#define DEVICE_MODEL            "L100"'));
+    expect(info, contains('#define DEVICE_PROTOCOL_VERSION 1'));
+    expect(info, contains('"power",'));
+    expect(info, contains('"brightness",'));
+    expect(info, contains('#define DEVICE_CAPABILITY_COUNT 2'));
+  });
+
+  test('device_api.c 包含 device_json 契约头 (编译依赖)', () {
+    final api = CodeGenerator.generate(def)['c/device_api.c']!;
+    expect(api, contains('#include "device_json.h"'));
   });
 
   test('Dart API：强类型方法 + 状态模型', () {
