@@ -93,4 +93,14 @@ class FakeBlePeripheral implements BlePeripheral {
       _notifyCtrl.add(List<int>.of(value));
     }
   }
+
+  /// Fake 没有真实链路，无回执写与普通写等价。
+  @override
+  Future<void> writeWithoutResponse(
+    String deviceId,
+    String serviceUuid,
+    String charUuid,
+    List<int> value,
+  ) =>
+      write(deviceId, serviceUuid, charUuid, value);
 }

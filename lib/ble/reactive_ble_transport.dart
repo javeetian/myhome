@@ -97,8 +97,19 @@ class ReactiveBleTransport implements BleTransport {
     _connSub = _peripheral.connect(deviceId, timeout: connectTimeout).listen(
       (state) {
         _setState(state);
-        if (state == BleConnectionState.connected && !connected.isCompleted) {
+        if (connected.isCompleted) {
+          return;
+        }
+        if (state == BleConnectionState.connected) {
           connected.complete();
+        } else if (state == BleConnectionState.disconnected) {
+          // 还没连上就收到 disconnected：链路已断/被设备拒绝，立刻失败。
+          // Android 上这会先打 close() + unregisterApp()，以前我们要干等到
+          // connectTimeout (8s) 才报超时 —— 白白多等好几秒。
+          _log.warn('BLE', '连接建立前已断开，立即失败', deviceId: deviceId);
+          connected.completeError(
+            StateError('连接建立前已断开 ($deviceId)'),
+          );
         }
       },
       onError: (Object e) {
@@ -115,6 +126,15 @@ class ReactiveBleTransport implements BleTransport {
     );
     _log.info('BLE', 'GATT 已连接 (${sw.elapsedMilliseconds}ms)',
         deviceId: deviceId);
+
+    // 1.5 请求高优先级连接 (缩短连接间隔)：服务发现和之后每次往返都受连接间隔
+    // 支配，实测 45ms→15ms 时发现耗时 860ms→65ms、单次往返 90ms→30ms。
+    //
+    // 这里不能 await：Android 侧该调用要等参数更新"完成"才返回。上游 FRB 把它
+    // 硬编码成固定 2 秒空转，而且这 2 秒一直占着 RxAndroidBle 的每连接操作队列，
+    // 会把紧随其后的服务发现压后 —— 所以我们 vendor 了一份补丁版
+    // (third_party/reactive_ble_mobile，见其 PATCH.md) 把等待改成 1ms。
+    unawaited(_requestHighPriority(deviceId));
 
     // 2. 先发现服务并校验特征，再协商 MTU。
     //
@@ -162,6 +182,22 @@ class ReactiveBleTransport implements BleTransport {
         deviceId: deviceId);
   }
 
+  /// 请求高优先级连接 (短连接间隔)。平台/设备不支持时忽略失败 ——
+  /// 这只是提速手段，不影响功能。
+  Future<void> _requestHighPriority(String deviceId) async {
+    if (_peripheral is! ConnectionPriorityControl) {
+      return;
+    }
+    // ConnectionPriorityControl 与 BlePeripheral 无继承关系，需显式转换
+    final ctrl = _peripheral as ConnectionPriorityControl;
+    try {
+      await ctrl.requestConnectionPriority(deviceId, high: true);
+      _log.info('BLE', '已请求高优先级连接 (缩短连接间隔)', deviceId: deviceId);
+    } catch (e) {
+      _log.warn('BLE', '连接优先级请求失败 (忽略): $e', deviceId: deviceId);
+    }
+  }
+
   Future<int> _negotiateMtu() async {
     try {
       final negotiated = await _peripheral.requestMtu(_deviceId!, requestedMtu);
@@ -199,6 +235,20 @@ class ReactiveBleTransport implements BleTransport {
       throw StateError('未连接，无法写入');
     }
     await _peripheral.write(
+      _deviceId!,
+      BleConstants.serviceUuid,
+      BleConstants.txUuid,
+      data,
+    );
+  }
+
+  /// ACK 等小帧用无回执写：省掉每次 GATT 写响应的往返。
+  @override
+  Future<void> writeWithoutResponse(List<int> data) async {
+    if (!isConnected) {
+      throw StateError('未连接，无法写入');
+    }
+    await _peripheral.writeWithoutResponse(
       _deviceId!,
       BleConstants.serviceUuid,
       BleConstants.txUuid,

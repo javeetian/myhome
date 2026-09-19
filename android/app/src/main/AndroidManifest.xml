@@ -1,5 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+    <!-- 本地 UI 服务器 (shelf_io.serve, lib/ui_runtime/ui_server.dart) 要开
+         127.0.0.1 端口给 WebView 加载页面 —— Android 对任何 socket 都要求本权限，
+         包括回环地址。Flutter 模板只在 debug/profile 的 manifest 里声明了它，
+         主 manifest 不加的话 release 包会 SocketException → UI 永远加载不出来。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- BLE 权限：扫描 (Android 12+) / 连接 / 旧版定位辅助扫描 -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"

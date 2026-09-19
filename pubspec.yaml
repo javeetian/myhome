@@ -59,6 +59,15 @@ dependencies:
   flutter_localizations:
     sdk: flutter
 
+# 覆盖一份打过补丁的 reactive_ble_mobile：
+#   上游 requestConnectionPriority 硬编码 2 秒空转延迟，且这 2 秒一直占着
+#   RxAndroidBle 的每连接操作队列，会把紧随其后的服务发现压后 1.7-3.4s。
+#   补丁把它改成 1ms（GATT 调用本身是同步发出的，这个值只是"等成功"的时间）。
+#   详见 docs/BLE_PERFORMANCE.md 与 third_party/reactive_ble_mobile/PATCH.md
+dependency_overrides:
+  reactive_ble_mobile:
+    path: third_party/reactive_ble_mobile
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

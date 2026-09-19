@@ -174,7 +174,10 @@ class DeviceClient {
     _missedPongs = 0;
     _heartbeatMissedThreshold = missedThreshold;
     _heartbeatTimer = Timer.periodic(interval, (_) => unawaited(_sendPing()));
-    unawaited(_sendPing()); // 立即发第一个
+    // 首个 PING 等一个周期再发，不在连接刚建立时抢跑：
+    // ReliableChannel 是 Window=1 (一次只允许一条在途消息)，而握手刚结束紧接着
+    // 要发的是 UI 资源 (manifest/ui.pkg) 请求 —— 链路刚被握手验证过，此时插一个
+    // PING 只会把"连上设备 → UI 可用"推后一个完整往返 (实测 ~100-200ms)。
   }
 
   void stopHeartbeat() {

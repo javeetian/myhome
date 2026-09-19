@@ -56,6 +56,23 @@ void main() {
     expect(peripheral.connectionSubscribed, isFalse); // 连接流订阅已清理
   });
 
+  test('连接建立前就断开 → 立刻失败，不等超时', () async {
+    peripheral.autoConnect = false; // 不发 connected
+    final future = transport.connect('dev-1');
+    await Future<void>.delayed(Duration.zero); // 等监听挂上
+
+    peripheral.emitDisconnected(); // Android 上表现为 close()/unregisterApp()
+
+    await expectLater(
+      future,
+      throwsA(
+        predicate((Object e) => e.toString().contains('连接建立前已断开')),
+      ),
+    );
+    expect(transport.isConnected, isFalse);
+    expect(peripheral.connectionSubscribed, isFalse);
+  });
+
   test('设备缺少目标特征时连接失败', () async {
     // 注：当前 txUuid == rxUuid (HM-10 风格共用特征)，
     // "缺特征" 用空集合表达；若后续 tx/rx 分离可单独移除其一。

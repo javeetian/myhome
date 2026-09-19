@@ -213,6 +213,10 @@ abstract class ProtocolDevice implements BleTransport {
     _decoder.add(data);
   }
 
+  /// 虚拟设备没有真实链路，无回执写与普通写等价。
+  @override
+  Future<void> writeWithoutResponse(List<int> data) => write(data);
+
   @override
   Stream<List<int>> get notifications => _notifications.stream;
 

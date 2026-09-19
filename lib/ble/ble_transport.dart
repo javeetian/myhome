@@ -18,6 +18,14 @@ abstract class BleTransport {
   /// 向设备写入原始字节 (写入 TX Characteristic)。
   Future<void> write(List<int> data);
 
+  /// 无需回执的写入 (ACK 等小帧)。
+  ///
+  /// 与 [write] 的区别：不等 GATT 写响应 (Android writeWithoutResponse)，
+  /// 省掉一次连接事件往返 —— 批量传输时 ACK 占了往返次数的很大比例。
+  /// 丢包时靠对方的超时重传兜底，所以 ACK 用它是安全的。
+  /// 默认实现退化为 [write]，实现类按需覆盖。
+  Future<void> writeWithoutResponse(List<int> data) => write(data);
+
   /// 设备发来的原始字节流 (来自 RX Characteristic 的 Notify)。
   Stream<List<int>> get notifications;
 

@@ -193,11 +193,15 @@ void main() {
   });
 
   test('心跳失联 → 会话 disconnected (§20, Phase 12)', () async {
+    // 该用例专测"心跳失联"这条路径，需要显式打开心跳开关
+    // (生产默认关闭：BLE 链路监督 + transport.connectionStates 已覆盖断线感知)
+    DeviceSessionController.heartbeatEnabled = true;
     DeviceSessionController.heartbeatInterval =
         const Duration(milliseconds: 50);
     DeviceSessionController.reconnectBaseDelay =
         const Duration(milliseconds: 30);
     addTearDown(() {
+      DeviceSessionController.heartbeatEnabled = false;
       DeviceSessionController.heartbeatInterval =
           const Duration(seconds: 10);
       DeviceSessionController.reconnectBaseDelay =

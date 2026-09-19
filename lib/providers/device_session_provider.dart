@@ -4,12 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../ble/ble_peripheral.dart';
 import '../ble/ble_transport.dart';
+import '../core/app_log.dart';
 import '../device/connection_phase.dart';
 import '../device/device_client.dart';
 import '../device/device_session.dart';
 import '../protocol/protocol_messages.dart';
 import 'ble_provider.dart';
 import 'device_manager_provider.dart';
+
+/// 连接阶段耗时打点 (排查"连上设备 → UI 可用"的时间去哪了)。
+/// 与 ReliableChannel 的「收到通知 / 发送 ACK / 发送 msgId」三条日志配合看。
+final AppLog _log = AppLog.instance;
 
 /// 设备会话控制器 (WORK_V2 §12.4/§12.5 的单会话形态)。
 ///
@@ -25,6 +30,14 @@ class DeviceSessionController extends Notifier<DeviceSession> {
   StreamSubscription<DeviceState>? _stateSub;
   StreamSubscription<BleConnectionState>? _connSub;
   bool _reconnecting = false;
+
+  /// 心跳开关 (Phase 12 §22 扩展)。
+  ///
+  /// **当前关闭**：BLE 链路本身有链路监督超时，断线由 transport 的
+  /// [BleTransport.connectionStates] 上报，协议层再叠一层 PING/PONG 是多余的；
+  /// 而且 ReliableChannel 是 Window=1，心跳会与业务消息（尤其是 UI 资源请求）
+  /// 抢同一个在途名额。需要时改回 true 即恢复，无需改其他代码。
+  static bool heartbeatEnabled = false;
 
   /// 心跳间隔 (Phase 12 §22 扩展；测试可缩短)。
   static Duration heartbeatInterval = const Duration(seconds: 10);
@@ -64,18 +77,27 @@ class DeviceSessionController extends Notifier<DeviceSession> {
       client: client,
     );
 
+    final sw = Stopwatch()..start();
     try {
       await client.connect();
+      _log.info('SESSION', '① transport 连接完成 ${sw.elapsedMilliseconds}ms',
+          deviceId: deviceId);
       // HELLO 握手 (WORK_V2 §15.3/§39)：handshaking
       state = state.copyWith(phase: ConnectionPhase.handshaking);
       await client.hello();
+      _log.info('SESSION', '② HELLO 完成 ${sw.elapsedMilliseconds}ms',
+          deviceId: deviceId);
       // 状态同步 (WORK_V2 §16.6)：设备是唯一数据源
       state = state.copyWith(phase: ConnectionPhase.syncingState);
       await client.syncState();
+      _log.info('SESSION', '③ 状态同步完成 ${sw.elapsedMilliseconds}ms',
+          deviceId: deviceId);
       _wireSession(client, resolved);
       // 心跳 (Phase 12 §22 扩展)：失联 → 断线流程 (§20)
       client.onConnectionLost = _onConnectionLost;
-      client.startHeartbeat(interval: heartbeatInterval);
+      if (heartbeatEnabled) {
+        client.startHeartbeat(interval: heartbeatInterval);
+      }
       state = state.copyWith(
         phase: ConnectionPhase.connected,
         deviceState: client.currentState,
@@ -151,7 +173,9 @@ class DeviceSessionController extends Notifier<DeviceSession> {
           unawaited(oldClient?.dispose() ?? Future<void>.value());
           _client = client;
           client.onConnectionLost = _onConnectionLost;
-          client.startHeartbeat(interval: heartbeatInterval);
+          if (heartbeatEnabled) {
+            client.startHeartbeat(interval: heartbeatInterval);
+          }
           _wireSession(client, transport);
           state = state.copyWith(
             phase: ConnectionPhase.connected,

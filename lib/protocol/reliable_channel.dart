@@ -111,6 +111,9 @@ class ReliableChannel {
     _decoder.onFrame = _handleFrame;
     _sub = transport.notifications.listen((data) {
       stats.addRx(data.length);
+      // 排查时间去哪了用：这条时间戳 + 下面的 "发送 ACK"/"发送 msgId" 三条日志
+      // 就能把"设备发出 → app 收到 → app 回话"的延迟拆开
+      log.debug('BLE', '收到通知 ${data.length} 字节');
       _decoder.add(data);
     });
   }
@@ -243,7 +246,8 @@ class ReliableChannel {
     stats.addTx(bytes.length);
     log.debug('BLE', '发送 ACK msgId=$msgId seq=$seq');
     unawaited(
-      transport.write(bytes).catchError((Object _) {
+      // 无回执写：ACK 不需要 GATT 写响应，省掉一次连接事件往返
+      transport.writeWithoutResponse(bytes).catchError((Object _) {
         // ACK 发送失败忽略 (对方会重发)
       }),
     );

@@ -6,7 +6,7 @@ import 'ble_peripheral.dart';
 
 /// [BlePeripheral] 的 flutter_reactive_ble 适配器：
 /// 把窄接口映射到 FRB 的 QualifiedCharacteristic / DiscoveredService API。
-class ReactiveBlePeripheral implements BlePeripheral {
+class ReactiveBlePeripheral implements BlePeripheral, ConnectionPriorityControl {
   ReactiveBlePeripheral(this._ble);
 
   final FlutterReactiveBle _ble;
@@ -94,6 +94,30 @@ class ReactiveBlePeripheral implements BlePeripheral {
     return _ble.writeCharacteristicWithResponse(
       _char(deviceId, serviceUuid, charUuid),
       value: value,
+    );
+  }
+
+  @override
+  Future<void> writeWithoutResponse(
+    String deviceId,
+    String serviceUuid,
+    String charUuid,
+    List<int> value,
+  ) {
+    return _ble.writeCharacteristicWithoutResponse(
+      _char(deviceId, serviceUuid, charUuid),
+      value: value,
+    );
+  }
+
+  /// 连接优先级：HIGH = 11.25ms 间隔，BALANCED = 系统默认 (通常 30–50ms)
+  @override
+  Future<void> requestConnectionPriority(String deviceId, {required bool high}) {
+    return _ble.requestConnectionPriority(
+      deviceId: deviceId,
+      priority: high
+          ? ConnectionPriority.highPerformance
+          : ConnectionPriority.balanced,
     );
   }
 }

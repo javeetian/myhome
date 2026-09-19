@@ -46,6 +46,10 @@ class FakeBleTransport implements BleTransport {
     scheduleMicrotask(() => _notifications.add(echo));
   }
 
+  /// Fake 没有真实链路，无回执写与普通写等价。
+  @override
+  Future<void> writeWithoutResponse(List<int> data) => write(data);
+
   @override
   Stream<List<int>> get notifications => _notifications.stream;
 

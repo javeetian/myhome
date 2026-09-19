@@ -94,6 +94,10 @@ class FaultInjector implements BleTransport {
     }
   }
 
+  /// 故障注入同样作用于无回执写 (ACK 也要经受丢包/延迟考验)
+  @override
+  Future<void> writeWithoutResponse(List<int> data) => write(data);
+
   @override
   Stream<List<int>> get notifications => inner.notifications;
 
