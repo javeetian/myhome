@@ -72,14 +72,7 @@ class UiRuntime {
     return DeviceManifest.fromJson(json);
   }
 
-  /// 经 RESOURCE_REQUEST/RESPONSE 下载资源 (§27)。
-  Future<Uint8List> _download(String path) async {
-    final response = await _client.requestResource(path);
-    if (!response.isOk) {
-      throw StateError(
-        '资源下载失败 ($path): ${response.error?.message ?? response.status}',
-      );
-    }
-    return response.data ?? Uint8List(0);
-  }
+  /// 经 RESOURCE_REQUEST/RESPONSE 分块下载完整资源 (§27)。
+  Future<Uint8List> _download(String path) =>
+      _client.downloadResource(path);
 }

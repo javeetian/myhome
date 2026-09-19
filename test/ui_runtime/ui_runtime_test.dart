@@ -156,4 +156,35 @@ void main() {
         );
     await expectLater(runtime.loadUi(), throwsA(isA<StateError>()));
   });
+
+  test('分块下载：ui.pkg 跨多块拼接 (WORK_V3 §27)', () async {
+    // 大 UI 包 (>224B/块 → 多块下载)；内容用伪随机保证 gzip 不缩得太小
+    final bigAsset = Uint8List.fromList(
+      List<int>.generate(4096, (i) => (i * 7919 + i * i) & 0xFF),
+    );
+    final bigPkg = UiPackage.pack(<String, Uint8List>{
+      'index.html': Uint8List.fromList(utf8.encode('<html><body>big</body></html>')),
+      'assets/big.bin': bigAsset,
+    });
+    expect(bigPkg.length, greaterThan(100 * 3),
+        reason: '测试前提：包足够大以触发多块下载');
+
+    final manifest = Uint8List.fromList(utf8.encode(jsonEncode(<String, dynamic>{
+      'protocol': 1,
+      'ui_version': '2.0.0',
+      'device': <String, dynamic>{'type': 'light', 'model': 'L200'},
+    })));
+    device.resources['ui.pkg'] = bigPkg;
+    device.resources['manifest.json'] = manifest;
+    device.resourceChunkSize = 100; // 强制多块下载 (真实设备为 224)
+
+    final result = await runtime.loadUi();
+
+    expect(result.manifest.uiVersion, '2.0.0');
+    // 分块拼接后的包完整解出：资源内容逐字节一致
+    final cached =
+        File(p.join(result.rootDir, 'assets', 'big.bin')).readAsBytesSync();
+    expect(cached.length, bigAsset.length);
+    expect(cached, bigAsset);
+  });
 }

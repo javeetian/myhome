@@ -13,16 +13,19 @@
  *   返回 snprintf 写入长度 → 正常响应 (运行时自动补 request_id)
  *   返回 3001/3002        → 参数错误 / 未知命令 (运行时组错误响应)
  */
+/* ★ 必须先包含胶水头：它引入 Jieli SDK 类型并定义 MYHOME_SDK_BOOL，
+ *   使生成的头文件跳过 <stdbool.h> (与 SDK 的 bool typedef 冲突) */
+#include "myhome_glue.h"
+
 #include "device_api.h"
 #include "device_state.h"
 #include "device_info.h"
+#include "hardware_adapter.h"
 #include "jiffies.h"
 
-#include "framework/myhome_glue.h"
-#include "framework/hardware/hardware_adapter.h"
-
-#include <stdio.h>
-#include <string.h>
+/* 注意：不能用 <stdio.h> —— 与 SDK fs.h 的 FILE 定义冲突 */
+#include "printf.h"   /* SDK: snprintf/printf */
+#include "string.h"
 
 /* ---------------- 设备状态 (唯一数据源) ---------------- */
 
@@ -72,7 +75,7 @@ const hardware_adapter_t g_hardware = {
 
 int myhome_device_state_json(char* out, int cap)
 {
-    return snprintf(out, (size_t)cap,
+    return snprintf(out, (unsigned long)cap,
                     "{\"power\":%s,\"brightness\":%u,\"color_temperature\":%u}",
                     g_state.power ? "true" : "false", g_state.brightness,
                     g_state.color_temperature);
@@ -90,7 +93,7 @@ int light_set_power(bool power, char* response_json, int response_len)
     g_state.version++;
     myhome_state_changed();
 
-    return snprintf(response_json, (size_t)response_len,
+    return snprintf(response_json, (unsigned long)response_len,
                     "{\"status\":\"ok\",\"data\":{\"power\":%s}}",
                     power ? "true" : "false");
 }
@@ -105,7 +108,7 @@ int light_set_brightness(uint8_t value, char* response_json, int response_len)
     myhome_state_changed();
     device_publish_event("light1.state_changed", "{\"field\":\"brightness\"}");
 
-    return snprintf(response_json, (size_t)response_len,
+    return snprintf(response_json, (unsigned long)response_len,
                     "{\"status\":\"ok\",\"data\":{\"brightness\":%u}}", value);
 }
 
@@ -119,7 +122,7 @@ int light_set_color_temperature(uint16_t value, char* response_json,
     g_state.version++;
     myhome_state_changed();
 
-    return snprintf(response_json, (size_t)response_len,
+    return snprintf(response_json, (unsigned long)response_len,
                     "{\"status\":\"ok\",\"data\":{\"color_temperature\":%u}}",
                     value);
 }
@@ -134,6 +137,84 @@ void device_state_changed(const device_state_t* state)
     }
     g_state.version++;
     myhome_state_changed();
+}
+
+/* ---------------- 资源服务：ui.pkg 分块读取 (§27) ----------------
+ *
+ * 设备端 UI 包存放在文件系统里，App 按 offset 分块拉取。
+ * 查找顺序：先试 MYHOME_RES_DIR 目录，再试根路径 (便于部署调试)。
+ *
+ * 部署方法：把 Studio 生成的 ui.pkg 烧到设备文件系统的
+ *   /myhome/ui.pkg
+ * (路径前缀可用 MYHOME_RES_DIR 调整；若走固件内嵌数组，改成 memcpy 即可)
+ */
+#define MYHOME_RES_DIR "/myhome/"
+
+/** 打开资源文件 (返回 NULL = 不存在)。[out_path] 回填实际命中路径。 */
+static FILE* open_resource(const char* name, char* out_path, int cap)
+{
+    FILE* f;
+    snprintf(out_path, (unsigned long)cap, "%s%s", MYHOME_RES_DIR, name);
+    f = fopen(out_path, "r");
+    if (f == NULL) {
+        /* 回退：根路径 */
+        snprintf(out_path, (unsigned long)cap, "%s", name);
+        f = fopen(out_path, "r");
+    }
+    return f;
+}
+
+/* 大小缓存：分块下载期间 runtime 每块都会问一次大小，避免重复打开文件 */
+static char g_size_path[64];
+static int g_size_value = -1;
+
+int myhome_resource_size(const char* path)
+{
+    char full[64];
+    FILE* f;
+    int size;
+
+    if (path == NULL) {
+        return -1;
+    }
+    if (g_size_value >= 0 && strcmp(g_size_path, path) == 0) {
+        return g_size_value;   /* 命中缓存 (同一资源传输期间不变) */
+    }
+    f = open_resource(path, full, sizeof(full));
+    if (f == NULL) {
+        printf("[light1] resource not found: %s\n", path);
+        return -1;
+    }
+    size = (int)flen(f);
+    fclose(f);
+
+    strncpy(g_size_path, path, sizeof(g_size_path) - 1);
+    g_size_path[sizeof(g_size_path) - 1] = 0;
+    g_size_value = size;
+    printf("[light1] resource %s -> %s (%d bytes)\n", path, full, size);
+    return size;
+}
+
+int myhome_resource_read(const char* path, u32 offset, u8* out, int cap)
+{
+    char full[64];
+    FILE* f;
+    int n;
+
+    if (path == NULL || out == NULL || cap <= 0) {
+        return -1;
+    }
+    f = open_resource(path, full, sizeof(full));
+    if (f == NULL) {
+        return -1;
+    }
+    if (fseek(f, offset, SEEK_SET) != 0) {
+        fclose(f);
+        return -1;
+    }
+    n = fread(out, 1, (u32)cap, f);
+    fclose(f);
+    return n;
 }
 
 /* ---------------- 应用启动 (在 app_main 或 BLE 初始化后调用) ---------------- */

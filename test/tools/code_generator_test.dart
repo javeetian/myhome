@@ -79,9 +79,14 @@ events:
     final api = CodeGenerator.generate(def)['c/device_api.c']!;
     expect(api, contains('device_handle_command'));
     expect(api, contains('ERR_UNKNOWN_COMMAND'));
-    expect(api, contains('device_json_get_uint(params_json, "value"'));
+    // 整型参数经 uint32_t 临时变量解析 + 范围校验 + 窄化调用
+    expect(api, contains('uint32_t value_raw;'));
+    expect(api, contains('device_json_get_uint(params_json, "value", &value_raw)'));
     expect(api, contains('越界 [0, 100]'));
-    expect(api, contains('light_set_brightness(value, response_json, response_len)'));
+    expect(api,
+        contains('light_set_brightness((uint8_t)value_raw, response_json, response_len)'));
+    // bool 直接解析
+    expect(api, contains('device_json_get_bool(params_json, "power", &power)'));
     expect(api, contains('light_set_power(power, response_json, response_len)'));
   });
 

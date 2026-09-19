@@ -60,21 +60,64 @@ class CodeGenerator {
         final type = entry.value.type;
         final min = entry.value.min;
         final max = entry.value.max;
-        final cType = _cType(type);
-        buffer
-          ..writeln('    $cType $name;')
-          ..writeln('    if (${_jsonGetter(type)}(params_json, "$name", &$name) != 0) {')
-          ..writeln('      return ERR_INVALID_PARAMETER; // 缺字段或类型错误')
-          ..writeln('    }');
-        if (min != null && max != null && type != ValueType.boolType) {
+        // 数值类型统一解析到 uint32_t 临时变量 (SDK 契约)，校验后再窄化
+        final isInt = type == ValueType.uint8 ||
+            type == ValueType.uint16 ||
+            type == ValueType.int32;
+        final raw = '${name}_raw';
+        switch (type) {
+          case ValueType.boolType:
+            buffer
+              ..writeln('    bool $name;')
+              ..writeln(
+                  '    if (device_json_get_bool(params_json, "$name", &$name) != 0) {')
+              ..writeln('      return ERR_INVALID_PARAMETER; // 缺字段或类型错误')
+              ..writeln('    }');
+          case ValueType.uint8:
+          case ValueType.uint16:
+          case ValueType.int32:
+            buffer
+              ..writeln('    uint32_t $raw;')
+              ..writeln(
+                  '    if (device_json_get_uint(params_json, "$name", &$raw) != 0) {')
+              ..writeln('      return ERR_INVALID_PARAMETER; // 缺字段或类型错误')
+              ..writeln('    }');
+          case ValueType.float:
+            buffer
+              ..writeln('    float $name;')
+              ..writeln(
+                  '    if (device_json_get_float(params_json, "$name", &$name) != 0) {')
+              ..writeln('      return ERR_INVALID_PARAMETER; // 缺字段或类型错误')
+              ..writeln('    }');
+          case ValueType.string:
+            buffer
+              ..writeln('    char $name[64];')
+              ..writeln('    if (device_json_get_string(params_json, "$name", $name,')
+              ..writeln('                               sizeof($name)) != 0) {')
+              ..writeln('      return ERR_INVALID_PARAMETER; // 缺字段或类型错误')
+              ..writeln('    }');
+        }
+        if (min != null &&
+            max != null &&
+            type != ValueType.boolType &&
+            type != ValueType.string) {
+          final checked = isInt ? raw : name;
+          // 无符号临时变量 (整型走 uint32_t) 不再生成 < 0 的恒假比较
+          final skipLower = isInt && min <= 0;
+          final condition = skipLower
+              ? '$checked > $max'
+              : '$checked < $min || $checked > $max';
           buffer
-            ..writeln('    if ($name < $min || $name > $max) {')
+            ..writeln('    if ($condition) {')
             ..writeln('      return ERR_INVALID_PARAMETER; // 越界 [$min, $max]')
             ..writeln('    }');
         }
       }
-      final args =
-          command.params.keys.join(', ');
+      final args = command.params.entries
+          .map((e) => _isIntType(e.value.type)
+              ? '(${_cType(e.value.type)})${e.key}_raw'
+              : e.key)
+          .join(', ');
       buffer
         ..writeln('    return $fn($args, response_json, response_len);')
         ..writeln('  }');
@@ -120,6 +163,12 @@ class CodeGenerator {
   static String _cFunctionName(String command) =>
       command.replaceAll('.', '_');
 
+  /// 整型家族 (统一走 device_json_get_uint → uint32_t 临时变量)。
+  static bool _isIntType(ValueType type) =>
+      type == ValueType.uint8 ||
+      type == ValueType.uint16 ||
+      type == ValueType.int32;
+
   static String _cType(ValueType type) => switch (type) {
         ValueType.boolType => 'bool',
         ValueType.uint8 => 'uint8_t',
@@ -127,14 +176,6 @@ class CodeGenerator {
         ValueType.int32 => 'int32_t',
         ValueType.float => 'float',
         ValueType.string => 'const char*',
-      };
-
-  static String _jsonGetter(ValueType type) => switch (type) {
-        ValueType.boolType => 'device_json_get_bool',
-        ValueType.uint8 || ValueType.uint16 || ValueType.int32 =>
-          'device_json_get_uint',
-        ValueType.float => 'device_json_get_float',
-        ValueType.string => 'device_json_get_string',
       };
 
   /// c/device_api.h
@@ -151,7 +192,11 @@ class CodeGenerator {
       ..writeln('#ifndef DEVICE_API_H')
       ..writeln('#define DEVICE_API_H')
       ..writeln()
+      ..writeln('/* bool 兼容：Jieli SDK 自带 typedef unsigned char bool，')
+      ..writeln(' * SDK 侧定义 MYHOME_SDK_BOOL 后跳过 stdbool.h (避免冲突) */')
+      ..writeln('#if !defined(MYHOME_SDK_BOOL)')
       ..writeln('#include <stdbool.h>')
+      ..writeln('#endif')
       ..writeln('#include <stdint.h>')
       ..writeln()
       ..writeln('/* 设备: ${def.name} (${def.model})，协议 v${def.protocolVersion}，API v${def.apiVersion} */')
@@ -173,6 +218,10 @@ class CodeGenerator {
       buffer.writeln();
     }
     buffer
+      ..writeln('/* 命令分发入口 (device_api.c 实现)：协议运行时调用 */')
+      ..writeln('int device_handle_command(const char* cmd, const char* params_json,')
+      ..writeln('                          char* response_json, int response_len);')
+      ..writeln()
       ..writeln('/* 事件发布 (SDK 提供)：命令成功 / 状态变化后调用 */')
       ..writeln('void device_publish_event(const char* name, const char* json);')
       ..writeln()
@@ -214,7 +263,11 @@ class CodeGenerator {
       ..writeln('#ifndef DEVICE_STATE_H')
       ..writeln('#define DEVICE_STATE_H')
       ..writeln()
+      ..writeln('/* bool 兼容：Jieli SDK 自带 typedef unsigned char bool，')
+      ..writeln(' * SDK 侧定义 MYHOME_SDK_BOOL 后跳过 stdbool.h (避免冲突) */')
+      ..writeln('#if !defined(MYHOME_SDK_BOOL)')
       ..writeln('#include <stdbool.h>')
+      ..writeln('#endif')
       ..writeln('#include <stdint.h>')
       ..writeln()
       ..writeln('typedef struct {')

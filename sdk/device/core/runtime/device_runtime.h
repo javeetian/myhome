@@ -60,10 +60,17 @@ typedef struct device_runtime_hooks {
      */
     int (*get_state_json)(char* out, int cap, void* ctx);
     /**
-     * 可选：读取设备资源 (ui.pkg 等)，返回字节数；<0 = 不存在。
-     * 传 NULL 时 RESOURCE_REQUEST 返回 5001 (Phase 10 接入 SPIFFS)。
+     * 可选：资源总大小 (ui.pkg 等)；<0 = 不存在。
+     * 传 NULL 时 RESOURCE_REQUEST 返回 5001。
+     * 与 [get_resource_chunk] 配对 —— 大资源按 offset 分块拉取 (§27)。
      */
-    int (*get_resource)(const char* path, uint8_t* out, int cap, void* ctx);
+    int (*get_resource_size)(const char* path, void* ctx);
+    /**
+     * 可选：读取资源分块：[offset, offset+cap) → out，返回实际字节数；<0 = 错误。
+     * App 按 offset 逐块请求，设备每块回一条 RESOURCE_RESPONSE。
+     */
+    int (*get_resource_chunk)(const char* path, uint32_t offset, uint8_t* out,
+                              int cap, void* ctx);
     /** 可选：单调毫秒时钟 (分片超时用)。NULL = 不做超时清理。 */
     uint32_t (*now_ms)(void);
     void* ctx;

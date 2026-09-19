@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:myhome/ble/ble_peripheral.dart';
 import 'package:myhome/ble/ble_transport.dart';
@@ -37,8 +38,14 @@ class FakeBleDevice implements BleTransport {
   /// HELLO 处理器 (Phase 10 §39)。null = 默认回 HELLO_ACK。
   DeviceHelloAck? Function(DeviceHello hello)? onHello;
 
-  /// 资源处理器 (Phase 10 §27)。null = 默认回 5001 资源不存在。
+  /// 资源处理器 (Phase 10 §27)。null = 用 [resources] / 默认回 5001。
   DeviceResourceResponse? Function(DeviceResourceRequest request)? onResource;
+
+  /// 分块资源表 (路径 → 内容)：按 [resourceChunkSize] 切片响应 offset 请求。
+  final Map<String, Uint8List> resources = <String, Uint8List>{};
+
+  /// 单块原始字节数 (模拟设备侧 RESOURCE_CHUNK_MAX)。
+  int resourceChunkSize = 224;
 
   /// STATE_REQUEST 处理器 (Phase 11 §16.5)。null = 默认回最近一次
   /// 推送过的状态 (无则 v1 空状态)。
@@ -190,11 +197,7 @@ class FakeBleDevice implements BleTransport {
         case FrameType.resourceRequest:
           final request = _codec.decode(frameType, message) as DeviceResourceRequest;
           final response = onResource?.call(request) ??
-              DeviceResourceResponse(
-                requestId: request.requestId,
-                status: 'error',
-                error: const DeviceError(code: 5001, message: 'resource not found'),
-              );
+              _serveResourceChunk(request);
           sendMessage(FrameType.resourceResponse, _codec.encode(response));
         case FrameType.ping:
           final ping = _codec.decode(frameType, message) as DevicePing;
@@ -258,6 +261,25 @@ class FakeBleDevice implements BleTransport {
 
   void sendPatch(int version, List<Map<String, dynamic>> ops) =>
       sendMessage(FrameType.patch, _codec.encode(DevicePatch(version: version, ops: ops)));
+
+  /// 分块资源响应 (模拟设备侧 handle_resource_request)。
+  DeviceResourceResponse _serveResourceChunk(DeviceResourceRequest request) {
+    final bytes = resources[request.path];
+    if (bytes == null || request.offset > bytes.length) {
+      return DeviceResourceResponse(
+        requestId: request.requestId,
+        status: 'error',
+        error: const DeviceError(code: 5001, message: 'resource not found'),
+      );
+    }
+    final end = (request.offset + resourceChunkSize).clamp(0, bytes.length);
+    return DeviceResourceResponse(
+      requestId: request.requestId,
+      offset: request.offset,
+      total: bytes.length,
+      data: bytes.sublist(request.offset, end),
+    );
+  }
 
   /// 设备 → App：发送裸 ACK 帧 (测试未知/迟到 ACK)。
   void sendAck(int msgId) {

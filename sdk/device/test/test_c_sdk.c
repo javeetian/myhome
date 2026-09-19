@@ -16,6 +16,7 @@
 #include "device_info.h"  /* 测试桩 (对应 generated/) */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int g_failures = 0;
@@ -432,6 +433,208 @@ static void test_runtime_end_to_end(void) {
           "runtime: unknown command -> error 3002");
 }
 
+
+
+/* 发送缓冲 → 组装器 → 完整消息 (App 侧同样流程；长消息跨多帧) */
+#define TEST_MSG_MAX 8
+static char g_msg_json[TEST_MSG_MAX][1024];
+static uint8_t g_msg_type[TEST_MSG_MAX];
+static int g_msg_count;
+
+static void on_test_msg(uint16_t msg_id, uint8_t frame_type,
+                        const uint8_t* data, uint16_t len, void* ctx) {
+    (void)msg_id;
+    (void)ctx;
+    if (g_msg_count >= TEST_MSG_MAX || len >= sizeof(g_msg_json[0])) {
+        return;
+    }
+    memcpy(g_msg_json[g_msg_count], data, len);
+    g_msg_json[g_msg_count][len] = 0;
+    g_msg_type[g_msg_count] = frame_type;
+    g_msg_count++;
+}
+
+/* 收集 g_rt_tx 里的全部完整消息 */
+static void collect_msgs(void) {
+    frag_assembler_t a;
+    frag_assembler_init(&a, 0, on_test_msg, NULL, NULL, NULL);
+    g_msg_count = 0;
+    uint16_t offset = 0;
+    while (offset + BLE_FRAME_HEADER_SIZE + BLE_FRAME_CRC_SIZE <= g_rt_tx_len) {
+        const uint16_t plen =
+            (uint16_t)(((uint16_t)g_rt_tx[offset + 5] << 8) | g_rt_tx[offset + 6]);
+        const uint16_t flen =
+            (uint16_t)(BLE_FRAME_HEADER_SIZE + plen + BLE_FRAME_CRC_SIZE);
+        if ((uint32_t)offset + flen > g_rt_tx_len) {
+            break;
+        }
+        ble_frame_t frame;
+        if (ble_frame_decode(g_rt_tx + offset, flen, &frame) > 0) {
+            frag_assembler_add(&a, &frame);
+        }
+        offset = (uint16_t)(offset + flen);
+    }
+}
+
+/* 找第一条指定类型的完整消息 JSON；找不到返回 NULL */
+static const char* find_msg(uint8_t type) {
+    collect_msgs();
+    for (int i = 0; i < g_msg_count; i++) {
+        if (g_msg_type[i] == type) {
+            return g_msg_json[i];
+        }
+    }
+    return NULL;
+}
+
+/* ---------------- 5. 资源分块传输 (§27) ---------------- */
+
+/* 构造 App 风格请求帧 (frag 头 + JSON) */
+static int build_req_frame(uint8_t* out, uint16_t msg_id, uint8_t type,
+                           uint16_t seq, const char* json) {
+    static uint8_t payload[512];
+    ble_frame_t f;
+    const uint16_t jlen = (uint16_t)strlen(json);
+    payload[0] = (uint8_t)(msg_id >> 8);
+    payload[1] = (uint8_t)(msg_id & 0xFF);
+    payload[2] = 0; payload[3] = 0;      /* index 0 */
+    payload[4] = 0; payload[5] = 1;      /* total 1 */
+    payload[6] = (uint8_t)(jlen >> 8);
+    payload[7] = (uint8_t)(jlen & 0xFF);
+    memcpy(payload + 8, json, jlen);
+    f.version = 1; f.type = type; f.flags = 0; f.sequence = seq;
+    f.length = (uint16_t)(8 + jlen);
+    f.payload = payload;
+    return ble_frame_encode(&f, out, 512);
+}
+
+/* 假资源 (1000 字节) */
+#define FAKE_RESOURCE_SIZE 1000
+static void fake_resource_fill(uint8_t* out, int size) {
+    for (int i = 0; i < size; i++) out[i] = (uint8_t)(i * 7 + 3);
+}
+static uint8_t g_fake_resource[FAKE_RESOURCE_SIZE];
+
+static int fake_res_size(const char* path, void* ctx) {
+    (void)ctx;
+    return strcmp(path, "ui.pkg") == 0 ? FAKE_RESOURCE_SIZE : -1;
+}
+static int fake_res_chunk(const char* path, uint32_t offset, uint8_t* out,
+                          int cap, void* ctx) {
+    (void)ctx;
+    if (strcmp(path, "ui.pkg") != 0 || offset >= FAKE_RESOURCE_SIZE) return -1;
+    int remain = FAKE_RESOURCE_SIZE - (int)offset;
+    int n = remain < cap ? remain : cap;
+    memcpy(out, g_fake_resource + offset, n);
+    return n;
+}
+
+/* base64 解码 (验证分块内容) */
+static int b64_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+static int b64_decode(const char* in, int in_len, uint8_t* out) {
+    int n = 0, buf = 0, bits = 0;
+    for (int i = 0; i < in_len; i++) {
+        if (in[i] == '=') break;
+        const int v = b64_val(in[i]);
+        if (v < 0) continue;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out[n++] = (uint8_t)((buf >> bits) & 0xFF);
+        }
+    }
+    return n;
+}
+
+/* 从响应 JSON 取数字字段 (简化: "key":N) */
+static long json_num(const char* json, const char* key) {
+    char pattern[32];
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+    const char* p = strstr(json, pattern);
+    return p == NULL ? -1 : strtol(p + strlen(pattern), NULL, 10);
+}
+
+/* 从响应 JSON 取 data 字符串并 base64 解码 */
+static int json_data_decode(const char* json, uint8_t* out, int cap) {
+    const char* p = strstr(json, "\"data\":\"");
+    if (p == NULL) return -1;
+    p += 8;
+    const char* end = strchr(p, '"');
+    if (end == NULL) return -1;
+    int n = b64_decode(p, (int)(end - p), out);
+    return n > cap ? -1 : n;
+}
+
+static void test_resource_chunks(void) {
+    fake_resource_fill(g_fake_resource, FAKE_RESOURCE_SIZE);
+
+    device_runtime_t rt;
+    device_runtime_hooks_t hooks;
+    memset(&hooks, 0, sizeof(hooks));
+    hooks.send = rt_send;
+    hooks.get_state_json = rt_get_state;
+    hooks.get_resource_size = fake_res_size;
+    hooks.get_resource_chunk = fake_res_chunk;
+    device_runtime_init(&rt, &hooks, 247);
+
+    uint8_t frame[512];
+    uint8_t assembled[FAKE_RESOURCE_SIZE + 64];
+    int assembled_len = 0;
+    uint16_t seq = 100;
+    uint32_t offset = 0;
+    int chunk_count = 0;
+    int total_seen = -1;
+
+    /* App 按 offset 逐块拉取 */
+    while (total_seen < 0 || (int)offset < total_seen) {
+        char req[96];
+        snprintf(req, sizeof(req),
+                 "{\"request_id\":%lu,\"path\":\"ui.pkg\",\"offset\":%lu}",
+                 (unsigned long)(100 + chunk_count), (unsigned long)offset);
+        const int flen = build_req_frame(frame, (uint16_t)chunk_count, FRAME_RESOURCE_REQ,
+                                            seq++, req);
+        g_rt_tx_len = 0;
+        device_runtime_on_bytes(&rt, frame, (uint16_t)flen);
+        check(count_ack() == 1, "resource: request ACKed");
+
+        const char* json = find_msg(FRAME_RESOURCE_RESP);
+        if (json == NULL) {
+            check(0, "resource: response message received");
+            return;
+        }
+        const long rsp_offset = json_num(json, "offset");
+        const long rsp_total = json_num(json, "total");
+        uint8_t decoded[256];
+        const int n = json_data_decode(json, decoded, (int)sizeof(decoded));
+        if (n <= 0 || rsp_offset != (long)offset) {
+            printf("DEBUG resp=%s | off=%ld want=%lu n=%d\n", json, rsp_offset,
+                   (unsigned long)offset, n);
+            check(0, "resource: chunk offset + payload valid");
+            return;
+        }
+        memcpy(assembled + assembled_len, decoded, (size_t)n);
+        assembled_len += n;
+        offset = (uint32_t)(rsp_offset + n);
+        total_seen = (int)rsp_total;
+        chunk_count++;
+        if (chunk_count > 64) break; /* 防死循环 */
+    }
+
+    check(total_seen == FAKE_RESOURCE_SIZE, "resource: total reported correctly");
+    check(chunk_count == 5, "resource: 1000B / 224B per chunk = 5 chunks");
+    check(assembled_len == FAKE_RESOURCE_SIZE &&
+              memcmp(assembled, g_fake_resource, FAKE_RESOURCE_SIZE) == 0,
+          "resource: chunked download reassembles byte-identical");
+}
+
 int main(void) {
     test_crc_anchor();
     test_frame_golden();
@@ -439,6 +642,7 @@ int main(void) {
     test_stream_decoder();
     test_fragment_roundtrip();
     test_runtime_end_to_end();
+    test_resource_chunks();
     printf("%s (%d failures)\n", g_failures == 0 ? "ALL PASS" : "FAILED",
            g_failures);
     return g_failures == 0 ? 0 : 1;

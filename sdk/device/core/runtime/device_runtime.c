@@ -172,7 +172,15 @@ static void handle_command(device_runtime_t* rt, const char* json)
     send_message(rt, FRAME_RESPONSE, out);
 }
 
-/* RESOURCE_REQUEST → RESOURCE_RESPONSE (§27, base64 内嵌) */
+/* RESOURCE_REQUEST → RESOURCE_RESPONSE (§27 分块传输)
+ *
+ * App 按 offset 逐块拉取：每次请求回一个分块，天然流控 (不会冲击 BLE TX)。
+ * 请求: {"request_id":N,"path":"ui.pkg","offset":0}
+ * 响应: {"request_id":N,"status":"ok","offset":0,"total":1834,"data":"<base64>"}
+ * App 累加至 offset + data.length >= total 即完成。
+ */
+#define RESOURCE_CHUNK_MAX 224 /* 单块原始字节 (base64 后 ~300B，单帧可承载) */
+
 static void handle_resource_request(device_runtime_t* rt, const char* json)
 {
     static const char b64[] =
@@ -180,23 +188,18 @@ static void handle_resource_request(device_runtime_t* rt, const char* json)
     char path[96];
     char out[DEVICE_RUNTIME_JSON_MAX];
     uint32_t request_id = 0;
-    static uint8_t resource[DEVICE_RUNTIME_JSON_MAX];
-    int size;
+    uint32_t offset = 0;
+    uint8_t chunk[RESOURCE_CHUNK_MAX];
+    int total;
+    int read;
 
     (void)device_json_get_uint(json, "request_id", &request_id);
+    (void)device_json_get_uint(json, "offset", &offset);
     if (device_json_get_string(json, "path", path, sizeof(path)) != 0) {
         return;
     }
-    if (rt->hooks.get_resource == NULL) {
-        snprintf(out, sizeof(out),
-                 "{\"request_id\":%lu,\"status\":\"error\","
-                 "\"error\":{\"code\":%d,\"message\":\"resource not found\"}}",
-                 (unsigned long)request_id, ERR_RESOURCE_NOT_FOUND);
-        send_message(rt, FRAME_RESOURCE_RESP, out);
-        return;
-    }
-    size = rt->hooks.get_resource(path, resource, (int)sizeof(resource), rt->hooks.ctx);
-    if (size <= 0) {
+
+    if (rt->hooks.get_resource_size == NULL || rt->hooks.get_resource_chunk == NULL) {
         snprintf(out, sizeof(out),
                  "{\"request_id\":%lu,\"status\":\"error\","
                  "\"error\":{\"code\":%d,\"message\":\"resource not found\"}}",
@@ -205,24 +208,43 @@ static void handle_resource_request(device_runtime_t* rt, const char* json)
         return;
     }
 
-    /*
-     * base64 编码后发送。注意：大资源 (ui.pkg) 需分块流式发送，
-     * 当前实现受 DEVICE_RUNTIME_JSON_MAX 限制，先支持小资源；
-     * ui.pkg 走 SPIFFS 分块路径在 Phase 10 完善。
-     */
-    const int prefix = snprintf(out, sizeof(out),
-                                "{\"request_id\":%lu,\"status\":\"ok\",\"data\":\"",
-                                (unsigned long)request_id);
+    total = rt->hooks.get_resource_size(path, rt->hooks.ctx);
+    if (total < 0 || offset > (uint32_t)total) {
+        snprintf(out, sizeof(out),
+                 "{\"request_id\":%lu,\"status\":\"error\","
+                 "\"error\":{\"code\":%d,\"message\":\"resource not found\"}}",
+                 (unsigned long)request_id, ERR_RESOURCE_NOT_FOUND);
+        send_message(rt, FRAME_RESOURCE_RESP, out);
+        return;
+    }
+
+    read = rt->hooks.get_resource_chunk(path, offset, chunk, RESOURCE_CHUNK_MAX,
+                                        rt->hooks.ctx);
+    if (read < 0) {
+        snprintf(out, sizeof(out),
+                 "{\"request_id\":%lu,\"status\":\"error\","
+                 "\"error\":{\"code\":%d,\"message\":\"resource read error\"}}",
+                 (unsigned long)request_id, ERR_RESOURCE_NOT_FOUND);
+        send_message(rt, FRAME_RESOURCE_RESP, out);
+        return;
+    }
+
+    /* base64 编码本块并组包 */
+    const int prefix = snprintf(
+        out, sizeof(out),
+        "{\"request_id\":%lu,\"status\":\"ok\",\"offset\":%lu,\"total\":%lu,"
+        "\"data\":\"",
+        (unsigned long)request_id, (unsigned long)offset, (unsigned long)total);
     int pos = prefix;
-    for (int i = 0; i < size && pos < (int)sizeof(out) - 8; i += 3) {
-        const uint32_t b0 = resource[i];
-        const uint32_t b1 = (i + 1 < size) ? resource[i + 1] : 0;
-        const uint32_t b2 = (i + 2 < size) ? resource[i + 2] : 0;
+    for (int i = 0; i < read && pos < (int)sizeof(out) - 8; i += 3) {
+        const uint32_t b0 = chunk[i];
+        const uint32_t b1 = (i + 1 < read) ? chunk[i + 1] : 0;
+        const uint32_t b2 = (i + 2 < read) ? chunk[i + 2] : 0;
         const uint32_t triple = (b0 << 16) | (b1 << 8) | b2;
         out[pos++] = b64[(triple >> 18) & 0x3F];
         out[pos++] = b64[(triple >> 12) & 0x3F];
-        out[pos++] = (i + 1 < size) ? b64[(triple >> 6) & 0x3F] : '=';
-        out[pos++] = (i + 2 < size) ? b64[triple & 0x3F] : '=';
+        out[pos++] = (i + 1 < read) ? b64[(triple >> 6) & 0x3F] : '=';
+        out[pos++] = (i + 2 < read) ? b64[triple & 0x3F] : '=';
     }
     out[pos++] = '"';
     out[pos++] = '}';

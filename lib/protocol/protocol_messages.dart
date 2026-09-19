@@ -162,31 +162,57 @@ class DeviceHelloAck extends ProtocolMessage {
 
 /// 资源请求 (App → 设备, §27)：按路径请求 manifest.json / ui.pkg 等。
 class DeviceResourceRequest extends ProtocolMessage {
-  const DeviceResourceRequest({required this.requestId, required this.path});
+  const DeviceResourceRequest({
+    required this.requestId,
+    required this.path,
+    this.offset = 0,
+  });
 
   final int requestId;
   final String path;
+
+  /// 分块拉取偏移 (WORK_V3 §27 大资源分块, 0 = 从头)。
+  final int offset;
 
   @override
   int get frameType => FrameType.resourceRequest;
 }
 
-/// 资源响应 (设备 → App, §27)。
-/// MVP 数据以 base64 内嵌 JSON (§46 第一阶段)；正式版换二进制编码。
+/// 资源响应 (设备 → App, §27)：一次响应携带一个分块。
+/// 数据以 base64 内嵌 JSON (§46 第一阶段)；正式版换二进制编码。
+///
+/// 分块约定：
+///   [offset] 本块在资源中的起始偏移，[total] 资源总大小 (未知时 null)。
+///   App 累加至 offset + data.length >= total 即完成。
 class DeviceResourceResponse extends ProtocolMessage {
   const DeviceResourceResponse({
     required this.requestId,
     this.status = 'ok',
+    this.offset = 0,
+    this.total,
     this.data,
     this.error,
   });
 
   final int requestId;
   final String status;
+
+  /// 本块起始偏移。
+  final int offset;
+
+  /// 资源总大小 (null = 单块/未声明)。
+  final int? total;
+
   final Uint8List? data;
   final DeviceError? error;
 
   bool get isOk => status == 'ok' && error == null;
+
+  /// 本块之后的下一偏移。
+  int get nextOffset => offset + (data?.length ?? 0);
+
+  /// 是否已收完整资源。
+  bool get isLastChunk => total == null || nextOffset >= total!;
 
   @override
   int get frameType => FrameType.resourceResponse;

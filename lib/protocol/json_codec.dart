@@ -49,10 +49,13 @@ class JsonCodec implements MessageCodec {
       DeviceResourceRequest m => <String, dynamic>{
           'request_id': m.requestId,
           'path': m.path,
+          if (m.offset != 0) 'offset': m.offset,
         },
       DeviceResourceResponse m => <String, dynamic>{
           'request_id': m.requestId,
           'status': m.status,
+          'offset': m.offset,
+          if (m.total != null) 'total': m.total,
           if (m.data != null) 'data': base64Encode(m.data!),
           if (m.error != null) 'error': m.error!.toJson(),
         },
@@ -111,10 +114,13 @@ class JsonCodec implements MessageCodec {
       FrameType.resourceRequest => DeviceResourceRequest(
           requestId: _requireInt(json, 'request_id'),
           path: _requireString(json, 'path'),
+          offset: _optionalInt(json, 'offset') ?? 0,
         ),
       FrameType.resourceResponse => DeviceResourceResponse(
           requestId: _requireInt(json, 'request_id'),
           status: _requireString(json, 'status'),
+          offset: _optionalInt(json, 'offset') ?? 0,
+          total: _optionalInt(json, 'total'),
           data: json['data'] is String ? base64Decode(json['data'] as String) : null,
           error: _optionalError(json),
         ),

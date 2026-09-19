@@ -7,7 +7,11 @@
 #ifndef DEVICE_JSON_H
 #define DEVICE_JSON_H
 
+/* bool 兼容：Jieli SDK 自带 typedef unsigned char bool (system/includes.h)，
+ * 不能再引 <stdbool.h> (会冲突)；平台侧定义 MYHOME_SDK_BOOL 后此处跳过。 */
+#if !defined(MYHOME_SDK_BOOL)
 #include <stdbool.h>
+#endif
 #include <stddef.h>
 #include <stdint.h>
 

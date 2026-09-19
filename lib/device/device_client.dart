@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import '../ble/ble_transport.dart';
 import '../core/app_log.dart';
@@ -34,6 +35,7 @@ class DeviceClient {
     Duration assembleTimeout = const Duration(seconds: 5),
     this.commandTimeout = const Duration(seconds: 8),
     this.resourceTimeout = const Duration(seconds: 60),
+    this.resourceChunkTimeout = const Duration(seconds: 5),
     DeviceStats? stats,
     AppLog? log,
   })  : _deviceId = deviceId,
@@ -84,6 +86,9 @@ class DeviceClient {
 
   /// 资源下载超时 (ui.pkg 可能较大, §27)。
   final Duration resourceTimeout;
+
+  /// 单个资源分块的等待超时 (§27 分块传输)。
+  final Duration resourceChunkTimeout;
 
   final Map<int, Completer<DeviceResponse>> _pending =
       <int, Completer<DeviceResponse>>{};
@@ -439,16 +444,20 @@ class DeviceClient {
     );
   }
 
-  /// 请求设备资源 (§27)：如 manifest.json / ui.pkg。
+  /// 请求设备资源分块 (§27)：[offset] 指定本块起始偏移。
   /// MVP 同一时刻只允许一个资源请求 (大文件串行)。
-  Future<DeviceResourceResponse> requestResource(String path) async {
+  Future<DeviceResourceResponse> requestResource(
+    String path, {
+    int offset = 0,
+  }) async {
     if (!_connected) {
       throw StateError('未连接');
     }
     final requestId = _nextRequestId++;
     final completer = Completer<DeviceResourceResponse>();
     _resourcePending = completer;
-    final message = DeviceResourceRequest(requestId: requestId, path: path);
+    final message =
+        DeviceResourceRequest(requestId: requestId, path: path, offset: offset);
     try {
       await _channel.send(
         _codec.encode(message),
@@ -459,11 +468,51 @@ class DeviceClient {
       rethrow;
     }
     return completer.future.timeout(
-      resourceTimeout,
+      resourceChunkTimeout,
       onTimeout: () {
-        throw TimeoutException('资源下载超时 ($path, request_id=$requestId)');
+        throw TimeoutException('资源分块超时 ($path @$offset, request_id=$requestId)');
       },
     );
+  }
+
+  /// 分块下载完整资源 (§27, WORK_V3 大资源传输)：
+  /// 按 offset 逐块拉取 → 拼接 → 返回完整字节。
+  ///
+  /// 每块独立走可靠通道 (ACK/重试)；整块无响应时按 [resourceChunkRetry]
+  /// 重试，仍失败则抛异常 (调用方可重新调用本方法从头下载)。
+  Future<Uint8List> downloadResource(
+    String path, {
+    int chunkRetry = 3,
+  }) async {
+    final builder = BytesBuilder(copy: false);
+    int offset = 0;
+    while (true) {
+      DeviceResourceResponse? chunk;
+      Object? lastError;
+      for (var attempt = 1; attempt <= chunkRetry; attempt++) {
+        try {
+          chunk = await requestResource(path, offset: offset);
+          break;
+        } catch (e) {
+          lastError = e;
+        }
+      }
+      if (chunk == null) {
+        throw StateError('资源分块下载失败 ($path @$offset): $lastError');
+      }
+      if (!chunk.isOk) {
+        throw StateError(
+          '资源下载失败 ($path @$offset): ${chunk.error?.message ?? chunk.status}',
+        );
+      }
+      final data = chunk.data ?? Uint8List(0);
+      builder.add(data);
+      offset = chunk.nextOffset;
+      if (data.isEmpty || chunk.isLastChunk) {
+        break;
+      }
+    }
+    return builder.takeBytes();
   }
 
   /// 发送命令并等待业务响应 (§11.1)。
