@@ -612,7 +612,7 @@ static void test_resource_chunks(void) {
         }
         const long rsp_offset = json_num(json, "offset");
         const long rsp_total = json_num(json, "total");
-        uint8_t decoded[256];
+        uint8_t decoded[1024];   /* ≥ RESOURCE_CHUNK_MAX (device_runtime.c) */
         const int n = json_data_decode(json, decoded, (int)sizeof(decoded));
         if (n <= 0 || rsp_offset != (long)offset) {
             printf("DEBUG resp=%s | off=%ld want=%lu n=%d\n", json, rsp_offset,
@@ -629,7 +629,7 @@ static void test_resource_chunks(void) {
     }
 
     check(total_seen == FAKE_RESOURCE_SIZE, "resource: total reported correctly");
-    check(chunk_count == 5, "resource: 1000B / 224B per chunk = 5 chunks");
+    check(chunk_count == 2, "resource: 1000B / 512B per chunk = 2 chunks");
     check(assembled_len == FAKE_RESOURCE_SIZE &&
               memcmp(assembled, g_fake_resource, FAKE_RESOURCE_SIZE) == 0,
           "resource: chunked download reassembles byte-identical");

@@ -38,6 +38,13 @@ void main() {
     expect(transport.mtu, ReactiveBleTransport.fallbackMtu);
   });
 
+  test('设备上报的 MTU 大于请求值时取请求值 (杰里固件回 517)', () async {
+    peripheral.negotiatedMtu = 517;
+    await transport.connect('dev-1');
+
+    expect(transport.mtu, 247); // min(请求 247, 设备 517)
+  });
+
   test('设备缺少目标服务时连接失败并清理状态', () async {
     peripheral.services = <String>{'0000aaaa-0000-1000-8000-00805f9b34fb'};
 

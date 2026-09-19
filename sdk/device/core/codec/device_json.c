@@ -7,7 +7,9 @@
 /* 定位 `"key":` 之后的值起始位置；找不到返回 NULL */
 static const char* find_value(const char* json, const char* key) {
     size_t key_len = strlen(key);
-    char pattern[64];
+    /* static：调用方跑在 BLE 回调的任务上下文里，任务栈只有 ~4KB，
+     * 这里虽只有 64 字节，但会被层层调用，统一按"大缓冲不进栈"处理 */
+    static char pattern[64];
     if (key_len + 3 >= sizeof(pattern)) {
         return NULL;
     }

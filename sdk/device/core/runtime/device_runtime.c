@@ -1,5 +1,6 @@
 #include "device_runtime.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -11,6 +12,22 @@
 #define ERR_INVALID_PARAMETER 3001
 #define ERR_UNKNOWN_COMMAND   3002
 #define ERR_RESOURCE_NOT_FOUND 5001
+
+/* 调试日志：由 platform 层的 hooks.log 输出 (通常是 printf)，没接就什么都不做。
+ * 排查"手机发了但设备没反应"时靠它看数据走到哪一步。
+ * 缓冲 static：任务栈只有 ~4KB，见 send_state 的说明 */
+static void rt_log(device_runtime_t* rt, const char* fmt, ...)
+{
+    static char line[128];
+    va_list ap;
+    if (rt == NULL || rt->hooks.log == NULL) {
+        return;
+    }
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    rt->hooks.log(line, rt->hooks.ctx);
+}
 
 /* 内部：发送一条消息 (JSON 体，自动分片) */
 static void send_message(device_runtime_t* rt, uint8_t frame_type,
@@ -24,6 +41,8 @@ static void send_message(device_runtime_t* rt, uint8_t frame_type,
                                               frame_type, (const uint8_t*)json,
                                               len, rt->hooks.send, rt->hooks.ctx);
     rt->tx_frames += frames;
+    rt_log(rt, "tx frame=%u len=%u frags=%u", (unsigned)frame_type,
+           (unsigned)len, (unsigned)frames);
 }
 
 /* 传输层 ACK (§9.1)：App 侧 ReliableChannel 依赖它，不发会触发重传 */
@@ -44,14 +63,21 @@ static void send_ack(device_runtime_t* rt, uint16_t msg_id)
     if (out_len > 0 && rt->hooks.send != NULL) {
         rt->hooks.send(buf, (uint16_t)out_len, rt->hooks.ctx);
         rt->tx_frames++;
+        rt_log(rt, "tx ACK id=%u", (unsigned)msg_id);
+    } else {
+        rt_log(rt, "tx ACK FAILED id=%u (encode=%d)", (unsigned)msg_id, out_len);
     }
 }
 
 /* 拼接状态 JSON：{"version":N,"state":{...}} */
 static void send_state(device_runtime_t* rt)
 {
-    char state_json[DEVICE_RUNTIME_JSON_MAX];
-    char out[DEVICE_RUNTIME_JSON_MAX + 64];
+    /* 大缓冲一律 static：本文件所有函数都在 BLE 回调的任务上下文里执行，
+     * 那个任务栈只有 ~4KB，局部大数组会直接把它吃穿
+     * (实测:CPU 报 "stack overflow",USP 越界)。运行时是单实例、不可重入，
+     * 每个函数各用各的 static 缓冲，不会互相踩。 */
+    static char state_json[DEVICE_RUNTIME_JSON_MAX];
+    static char out[DEVICE_RUNTIME_JSON_MAX + 64];
     if (rt->hooks.get_state_json == NULL) {
         return;
     }
@@ -69,7 +95,7 @@ static void send_state(device_runtime_t* rt)
 /* HELLO → HELLO_ACK (§39) */
 static void handle_hello(device_runtime_t* rt, const char* json)
 {
-    char out[DEVICE_RUNTIME_JSON_MAX];
+    static char out[DEVICE_RUNTIME_JSON_MAX]; /* static: 见 send_state 注释 (任务栈小) */
     uint32_t request_id = 0;
     (void)device_json_get_uint(json, "request_id", &request_id);
 
@@ -94,7 +120,7 @@ static void handle_hello(device_runtime_t* rt, const char* json)
 /* PING → PONG */
 static void handle_ping(device_runtime_t* rt, const char* json)
 {
-    char out[64];
+    static char out[64]; /* static: 见 send_state 注释 (任务栈小) */
     uint32_t request_id = 0;
     (void)device_json_get_uint(json, "request_id", &request_id);
     snprintf(out, sizeof(out), "{\"request_id\":%lu}", (unsigned long)request_id);
@@ -110,12 +136,12 @@ static void handle_state_request(device_runtime_t* rt)
 /* COMMAND → device_handle_command → RESPONSE (§10.2/§10.3) */
 static void handle_command(device_runtime_t* rt, const char* json)
 {
-    char cmd[64];
+    static char cmd[64];   /* static: 见 send_state 注释 (任务栈小) */
     const char* params_ptr = NULL;
     uint16_t params_len = 0;
     uint32_t request_id = 0;
-    char body[DEVICE_RUNTIME_JSON_MAX];
-    char out[DEVICE_RUNTIME_JSON_MAX + 64];
+    static char body[DEVICE_RUNTIME_JSON_MAX];
+    static char out[DEVICE_RUNTIME_JSON_MAX + 64];
     int body_len;
 
     if (device_json_get_uint(json, "request_id", &request_id) != 0) {
@@ -128,8 +154,8 @@ static void handle_command(device_runtime_t* rt, const char* json)
         params_ptr = "{}"; /* 无参数命令 */
     }
 
-    /* 参数子串非 NUL 结尾，复制到栈上再交给解析器 */
-    char params[DEVICE_RUNTIME_JSON_MAX];
+    /* 参数子串非 NUL 结尾，复制到缓冲再交给解析器 */
+    static char params[DEVICE_RUNTIME_JSON_MAX]; /* static: 见 send_state 注释 */
     if (params_ptr == NULL || params_len >= sizeof(params)) {
         return;
     }
@@ -179,17 +205,19 @@ static void handle_command(device_runtime_t* rt, const char* json)
  * 响应: {"request_id":N,"status":"ok","offset":0,"total":1834,"data":"<base64>"}
  * App 累加至 offset + data.length >= total 即完成。
  */
-#define RESOURCE_CHUNK_MAX 224 /* 单块原始字节 (base64 后 ~300B，单帧可承载) */
+#define RESOURCE_CHUNK_MAX 512 /* 单块原始字节 (base64 后 ~683B，响应约 754B 一帧发不完就分片)。
+                                * 变大 = 往返次数变少：每块一次请求-响应往返在 BLE 上要几百毫秒，
+                                * 块太小传输会非常慢 (上一版 224B，1.7KB 的 ui.pkg 要 8 块 ≈ 5.6s)。 */
 
 static void handle_resource_request(device_runtime_t* rt, const char* json)
 {
     static const char b64[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    char path[96];
-    char out[DEVICE_RUNTIME_JSON_MAX];
+    static char path[96];                      /* static: 见 send_state 注释 */
+    static char out[DEVICE_RUNTIME_JSON_MAX];
     uint32_t request_id = 0;
     uint32_t offset = 0;
-    uint8_t chunk[RESOURCE_CHUNK_MAX];
+    static uint8_t chunk[RESOURCE_CHUNK_MAX];
     int total;
     int read;
 
@@ -257,11 +285,16 @@ static void on_message(uint16_t msg_id, uint8_t frame_type, const uint8_t* data,
                        uint16_t len, void* ctx)
 {
     device_runtime_t* rt = (device_runtime_t*)ctx;
-    char json[DEVICE_RUNTIME_JSON_MAX];
+    static char json[DEVICE_RUNTIME_JSON_MAX]; /* static: 见 send_state 注释 */
+
+    rt_log(rt, "rx msg type=%u id=%u len=%u", (unsigned)frame_type,
+           (unsigned)msg_id, (unsigned)len);
 
     send_ack(rt, msg_id); /* 先 ACK，再处理 (§9.1) */
 
     if (len >= sizeof(json)) {
+        rt_log(rt, "rx msg DROPPED: len %u >= %u", (unsigned)len,
+               (unsigned)sizeof(json));
         return; /* 超长消息：忽略 (容量宏可调大) */
     }
     memcpy(json, data, len);
@@ -310,6 +343,8 @@ static void on_frame(const ble_frame_t* frame, void* ctx)
 {
     device_runtime_t* rt = (device_runtime_t*)ctx;
     rt->rx_frames++;
+    rt_log(rt, "rx frame type=%u seq=%u len=%u", (unsigned)frame->type,
+           (unsigned)frame->sequence, (unsigned)frame->length);
 
     switch (frame->type) {
     case FRAME_ACK:
@@ -357,6 +392,7 @@ void device_runtime_on_bytes(device_runtime_t* rt, const uint8_t* data,
     if (rt == NULL) {
         return;
     }
+    rt_log(rt, "rx bytes=%u", (unsigned)len);
     ble_stream_decoder_add(&rt->decoder, data, len);
 }
 
@@ -380,7 +416,7 @@ void device_runtime_notify_state_changed(device_runtime_t* rt)
 void device_runtime_send_event(device_runtime_t* rt, const char* name,
                                const char* data_json)
 {
-    char out[DEVICE_RUNTIME_JSON_MAX];
+    static char out[DEVICE_RUNTIME_JSON_MAX]; /* static: 见 send_state 注释 */
     if (rt == NULL || name == NULL) {
         return;
     }

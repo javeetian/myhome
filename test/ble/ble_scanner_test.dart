@@ -7,12 +7,13 @@ import 'package:myhome/ble/ble_scanner.dart';
 
 /// 构造测试用扫描结果 (可指定广播服务 UUID 列表)。
 DiscoveredDevice device({
+  String name = 'Light',
   List<String> serviceUuids = const <String>[],
   List<String> serviceDataUuids = const <String>[],
 }) =>
     DiscoveredDevice(
       id: 'dev-1',
-      name: 'Light',
+      name: name,
       serviceUuids: serviceUuids.map(Uuid.parse).toList(),
       serviceData: <Uuid, Uint8List>{
         for (final uuid in serviceDataUuids) Uuid.parse(uuid): Uint8List(0),
@@ -21,8 +22,23 @@ DiscoveredDevice device({
       rssi: -50,
     );
 
-/// 扫描过滤 (WORK_V2 §6.3)：只保留广播 BleConstants.serviceUuid 的设备。
+/// 扫描收到的设备过滤。
 void main() {
+  test('无广播名的设备被过滤', () {
+    expect(BleScanner.accepts(device(name: '')), isFalse);
+  });
+
+  test('有名字的设备收下 (服务过滤关闭时，不看广播内容)', () {
+    // filterScanByService 默认 false：此时任何有名字的设备都进列表
+    expect(BleScanner.accepts(device()), isTrue);
+    expect(
+      BleScanner.accepts(device(serviceUuids: <String>[
+        '0000180f-0000-1000-8000-00805f9b34fb', // 标准电池服务
+      ])),
+      isTrue,
+    );
+  });
+
   test('广播 128 位服务 UUID 命中', () {
     expect(
       BleScanner.matchesTarget(device(serviceUuids: <String>[

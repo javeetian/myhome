@@ -232,14 +232,16 @@ class ReliableChannel {
   /// 发送 ACK 帧 (入站消息确认, §9.1 双向)。
   /// ACK 帧不经过发送队列 (Window=1 仅限业务消息)。
   void _sendAck(int msgId) {
+    final seq = fragmenter.sequencer.next();
     final bytes = BleFrame(
       version: BleFrame.currentVersion,
       type: FrameType.ack,
       flags: 0,
-      sequence: fragmenter.sequencer.next(),
+      sequence: seq,
       payload: <int>[msgId >> 8, msgId & 0xFF],
     ).encode();
     stats.addTx(bytes.length);
+    log.debug('BLE', '发送 ACK msgId=$msgId seq=$seq');
     unawaited(
       transport.write(bytes).catchError((Object _) {
         // ACK 发送失败忽略 (对方会重发)

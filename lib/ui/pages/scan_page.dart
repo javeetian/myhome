@@ -43,6 +43,13 @@ class _ScanPageState extends ConsumerState<ScanPage> {
     final l10n = AppLocalizations.of(context)!;
     setState(() => _busy = true);
     try {
+      // 必须先停扫描再连接：Android 上射频扫广播信道期间发起 GATT 连接，
+      // 连接会被拖慢甚至建立不起来 (现象：GATT 客户端注册后拿不到
+      // onClientConnectionState，20 秒后超时)，部分 ROM 更明显。
+      await ref.read(bleScannerProvider).stopScan();
+      if (!mounted) {
+        return;
+      }
       await openDeviceFlow(
         context,
         ref,

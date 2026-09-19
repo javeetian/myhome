@@ -55,7 +55,8 @@ class BleScanner {
   Stream<bool> get isScanning => _scanning.stream;
 
   /// 开始扫描 (15 秒后自动停止)。
-  /// 只扫描广播 [BleConstants.serviceUuid] 的目标设备 (WORK_V2 §6.3)。
+  /// 是否只保留广播 [BleConstants.serviceUuid] 的设备由
+  /// [BleConstants.filterScanByService] 决定 (固件还未在广播里放该 UUID)。
   Future<void> startScan() async {
     if (!_isSupported) {
       throw StateError('当前平台不支持 BLE');
@@ -65,14 +66,14 @@ class BleScanner {
     _results.add(const <DiscoveredDevice>[]);
     _sub = _ble!
         .scanForDevices(
-          withServices: <Uuid>[Uuid.parse(BleConstants.serviceUuid)],
+          withServices: BleConstants.filterScanByService
+              ? <Uuid>[Uuid.parse(BleConstants.serviceUuid)]
+              : const <Uuid>[],
           scanMode: ScanMode.balanced,
         )
         .listen(
           (device) {
-            // 系统层过滤之外再按广播内容过滤一次：部分平台 (如 Android)
-            // 的 service 过滤依赖广播包，扫描响应命中的情况靠这里兜底。
-            if (!BleScanner.matchesTarget(device)) {
+            if (!BleScanner.accepts(device)) {
               return;
             }
             _seen[device.id] = device;
@@ -82,6 +83,23 @@ class BleScanner {
         );
     _scanning.add(true);
     _timer = Timer(const Duration(seconds: 15), stopScan);
+  }
+
+  /// 扫描结果是否收下该设备：由 [BleConstants] 的两个开关决定 ——
+  /// 是否要求有广播名 ([BleConstants.requireDeviceName])、是否要求广播
+  /// 目标服务 UUID ([BleConstants.filterScanByService])。
+  ///
+  /// 服务过滤除了系统层的 withServices 之外再按广播内容过滤一次：
+  /// 部分平台 (如 Android) 的 service 过滤依赖广播包，扫描响应命中的
+  /// 情况靠这里兜底。
+  static bool accepts(DiscoveredDevice device) {
+    if (BleConstants.requireDeviceName && device.name.isEmpty) {
+      return false;
+    }
+    if (BleConstants.filterScanByService && !matchesTarget(device)) {
+      return false;
+    }
+    return true;
   }
 
   /// 目标设备判定：广播/扫描响应中的服务 UUID 与 [BleConstants.serviceUuid]

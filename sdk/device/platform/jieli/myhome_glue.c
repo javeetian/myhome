@@ -32,7 +32,18 @@ static u16 g_tick_timer = 0;
 static void myhome_send(const uint8_t* data, u16 len, void* ctx)
 {
     (void)ctx;
-    custom_fff0_notify((const u8*)data, len);
+    const int ret = custom_fff0_notify((const u8*)data, len);
+    if (ret != 0) {
+        /* 0=成功; BLE_CMD_CCC_FAIL=手机没订阅通知; -1=未连接 */
+        printf("[myhome] notify FAILED ret=%d len=%u\n", ret, (unsigned)len);
+    }
+}
+
+/** 运行时调试日志：每一步 (收到字节/解出帧/分发/回包) 都打到串口 */
+static void myhome_log(const char* msg, void* ctx)
+{
+    (void)ctx;
+    printf("[myhome] %s\n", msg);
 }
 
 /** 运行时索取当前状态 JSON (STATE / STATE_REQUEST 响应) */
@@ -120,13 +131,15 @@ static void myhome_tick_task(void* priv)
 
 void myhome_init(u16 mtu)
 {
-    device_runtime_hooks_t hooks;
+    /* = {0}：hooks 是结构体，漏赋值的字段不能是栈上垃圾 */
+    device_runtime_hooks_t hooks = {0};
     g_mtu = (mtu >= 23) ? mtu : 247;
     hooks.send = myhome_send;
     hooks.get_state_json = myhome_state;
     hooks.get_resource_size = myhome_resource_size_hook;
     hooks.get_resource_chunk = myhome_resource_chunk_hook;
     hooks.now_ms = myhome_now_ms;
+    hooks.log = myhome_log;
     hooks.ctx = NULL;
     device_runtime_init(&g_rt, &hooks, g_mtu);
     g_inited = 1;
@@ -149,6 +162,9 @@ void myhome_deinit(void)
 
 void myhome_ble_on_write(u8* buffer, u16 buffer_size)
 {
+    /* 这一行是"手机到底有没有写进来"的第一手证据 */
+    printf("[myhome] BLE write %u bytes\n", (unsigned)buffer_size);
+
     /* 兜底：app 未显式初始化时，第一条 BLE 数据到达自动初始化 */
     if (!g_inited) {
         myhome_init(247);

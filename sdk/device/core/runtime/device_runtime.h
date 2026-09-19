@@ -46,9 +46,11 @@
 #define DEVICE_RUNTIME_ASSEMBLE_TIMEOUT_MS 5000
 #endif
 
-/** 状态/响应 JSON 缓冲上限。 */
+/** 状态/响应 JSON 缓冲上限。
+ *  资源分块下载时响应体 = base64(块大小) + 外层 JSON，块 512B 时约 754B，
+ *  所以这里不能小于 768 (取 1024 留余量)。 */
 #ifndef DEVICE_RUNTIME_JSON_MAX
-#define DEVICE_RUNTIME_JSON_MAX 512
+#define DEVICE_RUNTIME_JSON_MAX 1024
 #endif
 
 typedef struct device_runtime_hooks {
@@ -73,6 +75,12 @@ typedef struct device_runtime_hooks {
                               int cap, void* ctx);
     /** 可选：单调毫秒时钟 (分片超时用)。NULL = 不做超时清理。 */
     uint32_t (*now_ms)(void);
+    /**
+     * 可选：调试日志 (平台实现，通常是 printf)。NULL = 不打日志。
+     * 排查"手机发了但设备没反应"时靠它看数据走到哪一步：
+     * BLE 写入 → 帧解码 → 分发 → 回包，每一步都会打一行。
+     */
+    void (*log)(const char* msg, void* ctx);
     void* ctx;
 } device_runtime_hooks_t;
 
