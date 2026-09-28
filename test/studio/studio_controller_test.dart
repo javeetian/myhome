@@ -156,6 +156,41 @@ void main() {
     );
   });
 
+  test('packUiDir：force 重打包 + .uipkgignore 排除 (Phase 45 瘦身)', () async {
+    final uiDir = Directory('${tempDir.path}/ui_ignore');
+    uiDir.createSync();
+    File('${uiDir.path}/manifest.json').writeAsStringSync(jsonEncode(<String, dynamic>{
+      'package': 'light_ui',
+      'version': '1.0.0',
+      'device': <String, dynamic>{'type': 'light', 'model': 'L100'},
+      'protocol': <String, dynamic>{'version': 1},
+      'entry': 'index.html',
+    }));
+    File('${uiDir.path}/index.html').writeAsStringSync('<html/>');
+    File('${uiDir.path}/serve.py').writeAsStringSync('print(1)');
+    File('${uiDir.path}/.uipkgignore').writeAsStringSync('serve.py\n');
+
+    final notifier = container.read(studioControllerProvider.notifier);
+    final outPkg = '${tempDir.path}/build/ui.pkg';
+
+    // 无 force：产物存在 → 原样返回 (旧行为不变)
+    File(outPkg)
+      ..parent.createSync(recursive: true)
+      ..writeAsBytesSync(UiPackage.pack(<String, Uint8List>{
+        'manifest.json': Uint8List.fromList(utf8.encode('{"entry":"index.html"}')),
+        'index.html': Uint8List.fromList(utf8.encode('<html>stale</html>')),
+        'serve.py': Uint8List.fromList(utf8.encode('print(1)')),
+      }));
+    final cached = await notifier.packUiDir(uiDir.path, outPkg);
+    expect(UiPackage.unpack(cached!).keys, contains('serve.py'));
+
+    // force：忽略过期产物，按清单重打包
+    final pkg = await notifier.packUiDir(uiDir.path, outPkg, force: true);
+    expect(UiPackage.unpack(pkg!).keys.toSet(), {'manifest.json', 'index.html'});
+    expect(UiPackage.unpack(File(outPkg).readAsBytesSync()).keys,
+        isNot(contains('serve.py')));
+  });
+
   test('UI Hot Reload：源文件变化 → 重打包 → reloadCount++ (Phase 37)', () async {
     // 建 UI 源目录
     final uiDir = Directory('${tempDir.path}/ui_src');

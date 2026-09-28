@@ -80,10 +80,17 @@ flutter build macos --release      # macOS App (需 Mac 机器)
 
 ```bash
 # 绿色版：整个 Release 目录拷贝即用
-flutter build windows --release -t lib/studio/studio_main.dart
+#   （--obfuscate / --split-debug-info 与 inno_bundle 自己构建时保持一致）
+flutter build windows --release --obfuscate --split-debug-info=build/obfuscate \
+  -t lib/studio/studio_main.dart
+
+# 随附源码：sdk/device（协议运行时）+ light1 示例工程 → Release/samples/
+dart run tools/pack_samples.dart
 
 # 安装包（Inno Setup，配置见 pubspec.yaml 的 inno_bundle 段）
-dart run inno_bundle --release --build-args="-tlib/studio/studio_main.dart"
+#   --no-app：用上面构建好的产物；让 inno_bundle 再跑一次 flutter build
+#   会把 Release 目录重写一遍，刚摆好的 samples/ 不保险
+dart run inno_bundle --release --no-app
 
 # macOS
 flutter build macos --release -t lib/studio/studio_main.dart
@@ -93,7 +100,10 @@ flutter build macos --release -t lib/studio/studio_main.dart
 - 需要先装 [Inno Setup 6](https://jrsoftware.org/isdl.php)（编译器，装一次）
 - 首次使用：`dart run inno_bundle setup`（生成随机 GUID 与 publisher，写入 pubspec.yaml，
   本仓库已配置好，新克隆的环境需执行一次）
-- 产物：`build/windows/x64/runner/Release/myhome_installer.exe`（安装包）
+- 产物：`build/windows/x64/installer/Release/Myhome-x86_64-<版本>-Installer.exe`
+  （如 `Myhome-x86_64-1.0.0+1-Installer.exe`；输出目录/文件名由 inno_bundle 定）
+- 安装包按 Release 目录内容生成：`samples/` 整份装到 `<安装目录>\samples\`，
+  用户照使用文档 §7 自己拷进设备 SDK（`sdk/device` 不开放源码仓库，靠随包分发）
 - 安装后工作目录：`C:\Program Files\myhome\`，其中 `workspace/` 为设备工作目录
   （Studio 新建设备的默认位置，可在新建对话框里改）
 
@@ -101,6 +111,8 @@ flutter build macos --release -t lib/studio/studio_main.dart
 
 - 产物位置：`build/<平台>/x64/runner/Release/` —— **整个目录**即发布包
   （exe + data/ + 依赖 DLL），拷贝到目标机器双击 exe 运行
+- Studio 发布包里的 `samples/`（随附的设备端源码 + light1 示例）由
+  `dart run tools/pack_samples.dart` 摆进去，绿色版和安装包都带它
 - 目标机要求：Windows 10/11（自带 Edge WebView2 Runtime）；
   移动端无需 WebView2（用系统 WebView）
 - Studio 发布包建议随附 `devices/` 设备工作目录（见 §2.3 新建设备）；
@@ -189,7 +201,7 @@ deviceApi.onPatch(function(ops) { ... });   // 补丁自动应用到 deviceState
 
 ```bash
 dart run tools/device_cli.dart ui build devices/smart_light/ui
-# → devices/smart_light/build/ui.pkg
+# → devices/smart_light/build/ui.pkg (加 --compress-images 顺手压 PNG，同 Studio 偏好设置)
 
 dart run tools/device_cli.dart ui validate devices/smart_light/build/ui.pkg
 # → PASS / 明确错误 (缺 manifest、entry 不存在、协议版本不匹配、哈希不符…)
@@ -259,10 +271,13 @@ generated/
 │   ├── device_api.h         命令处理原型（你要实现的部分）
 │   ├── device_commands.c    命令路由 + 参数解析校验（已生成，勿改）
 │   └── device_state.h       状态结构体
-├── dart/device_api.dart     强类型 API（App 侧可选使用）
-├── simulator/virtual_device.dart  虚拟设备骨架（Studio 模拟用）
+├── dart/device_api.dart     强类型 API（Dart 侧可选，设备端用不到）
+├── simulator/virtual_device.dart  虚拟设备骨架（PC 模拟用，设备端用不到）
 └── manifest.json            UI manifest
 ```
+
+移植到设备只用 `c/` + `manifest.json`；生成 `dart/` `simulator/` 目前没有消费方
+（Studio 模拟走 DefinedVirtualDevice，见 §4/§7），留着是给 Dart 侧当起点的。
 
 ## 6.2 移植到设备 SDK（WORK_V3 §44/§48）
 

@@ -58,6 +58,7 @@ dependencies:
   shared_preferences: ^2.5.5
   flutter_localizations:
     sdk: flutter
+  image: ^4.10.1
 
 # 覆盖一份打过补丁的 reactive_ble_mobile：
 #   上游 requestConnectionPriority 硬编码 2 秒空转延迟，且这 2 秒一直占着
@@ -92,6 +93,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # 使用文档 (帮助菜单里直接查看；仓库 docs/ 下同一份文件，改一处即可)
+  assets:
+    - docs/使用文档.md
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -15,6 +15,7 @@ import '../protocol/protocol_messages.dart';
 import '../simulator/fault_injector.dart';
 import '../tools/code_generator.dart';
 import 'opened_files_controller.dart';
+import 'studio_settings.dart';
 import '../ui_runtime/ui_cache.dart';
 import '../ui_runtime/ui_package.dart';
 import '../ui_runtime/ui_server.dart';
@@ -278,41 +279,56 @@ class StudioController extends Notifier<StudioState> {
   Future<Uint8List?> loadSmartLightPkg() =>
       packUiDir(smartLightUiDir, smartLightPkgPath);
 
-  /// 通用：UI 源目录 → ui.pkg (产物存在则直接读，否则现场打包落盘)。
-  /// 返回 null = 目录/源不存在。
-  Future<Uint8List?> packUiDir(String uiDir, String outPkg) async {
+  /// 通用：UI 源目录 → ui.pkg。
+  /// [force] = false 时产物存在直接读；true 时忽略产物、现场重打包
+  /// (源目录改过但产物还在时，避免读到过期包)。
+  /// 打包按 `.uipkgignore` 排除 (见 [UiPackageSource])，图片压缩跟随
+  /// [compressUiImagesProvider] 设置。返回 null = 目录/源不存在。
+  Future<Uint8List?> packUiDir(
+    String uiDir,
+    String outPkg, {
+    bool force = false,
+  }) async {
     try {
       final pkgPath = resolvePath(outPkg);
       final uiDirPath = resolvePath(uiDir);
       final pkgFile = File(pkgPath);
-      if (pkgFile.existsSync()) {
+      if (!force && pkgFile.existsSync()) {
         return Uint8List.fromList(pkgFile.readAsBytesSync());
       }
       final dir = Directory(uiDirPath);
       if (!dir.existsSync()) {
         return null;
       }
-      final files = <String, Uint8List>{};
-      for (final entity in dir.listSync(recursive: true)) {
-        if (entity is! File) {
-          continue;
-        }
-        final rel =
-            p.relative(entity.path, from: dir.path).replaceAll('\\', '/');
-        files[rel] = Uint8List.fromList(entity.readAsBytesSync());
-      }
+      final collected = UiPackageSource.collect(
+        dir,
+        compressImages: ref.read(compressUiImagesProvider),
+      );
+      final files = collected.files;
       if (!files.containsKey('manifest.json')) {
         return null;
       }
       final pkg = UiPackage.pack(files);
       pkgFile.parent.createSync(recursive: true);
       pkgFile.writeAsBytesSync(pkg);
-      _appendLog('INFO UI 从源目录现场打包 (${files.length} 文件)');
+      _appendLog('INFO UI 从源目录现场打包 (${files.length} 文件'
+          '${_excludedSuffix(collected)})');
       return pkg;
     } catch (e) {
       _appendLog('WARN UI 包加载失败: $e');
       return null;
     }
+  }
+
+  /// 打包日志后缀：排除数 + 图片压缩战绩。
+  static String _excludedSuffix(UiPackageFiles collected) {
+    final parts = <String>[
+      if (collected.skipped.isNotEmpty) '排除 ${collected.skipped.length}',
+      if (collected.compressedCount > 0)
+        '压缩图片 ${collected.compressedCount} 个省 '
+            '${(collected.savedBytes / 1024).toStringAsFixed(1)} KB',
+    ];
+    return parts.isEmpty ? '' : '，${parts.join('，')}';
   }
 
   /// UI Hot Reload (Phase 37)：监听 UI 源目录 → 自动重打包 → 重载 WebView。
@@ -371,8 +387,12 @@ class StudioController extends Notifier<StudioState> {
         target.parent.createSync(recursive: true);
         target.writeAsStringSync(entry.value);
       }
-      // ui.pkg
-      await packUiDir(p.join(dir, 'ui'), p.join(dir, 'build', 'ui.pkg'));
+      // ui.pkg (force：源目录改过后产物仍在，必须重打包)
+      await packUiDir(
+        p.join(dir, 'ui'),
+        p.join(dir, 'build', 'ui.pkg'),
+        force: true,
+      );
       _appendLog(
         'INFO 代码生成完成: ${files.length} 文件 → ${outDir.path}',
       );
@@ -422,15 +442,11 @@ class StudioController extends Notifier<StudioState> {
       return;
     }
     try {
-      final files = <String, Uint8List>{};
-      for (final entity in Directory(dir).listSync(recursive: true)) {
-        if (entity is! File) {
-          continue;
-        }
-        final rel =
-            p.relative(entity.path, from: dir).replaceAll('\\', '/');
-        files[rel] = Uint8List.fromList(entity.readAsBytesSync());
-      }
+      final collected = UiPackageSource.collect(
+        Directory(dir),
+        compressImages: ref.read(compressUiImagesProvider),
+      );
+      final files = collected.files;
       if (!files.containsKey('manifest.json')) {
         _appendLog('ERROR UI 目录缺少 manifest.json');
         return;
@@ -442,7 +458,8 @@ class StudioController extends Notifier<StudioState> {
       // 覆盖缓存 (同版本目录, Corrupted → Reinstall 语义)
       final cache = _cache ?? await UiCache.open();
       await _storeUiPackage(cache, device, pkg);
-      _appendLog('INFO UI 已重打包 (${files.length} 文件) → 重载 WebView');
+      _appendLog('INFO UI 已重打包 (${files.length} 文件'
+          '${_excludedSuffix(collected)}) → 重载 WebView');
       if (ref.mounted) {
         state = state.copyWith(reloadCount: state.reloadCount + 1);
       }

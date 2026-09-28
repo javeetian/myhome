@@ -62,6 +62,7 @@ events: []
     expect(find.text('查看'), findsOneWidget);
     expect(find.text('转到'), findsOneWidget);
     expect(find.text('运行'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
     expect(find.text('帮助'), findsOneWidget);
     expect(find.text('设备'), findsOneWidget);
     expect(find.text('Inspector'), findsOneWidget);
@@ -79,5 +80,36 @@ events: []
     expect(find.text('UI Version'), findsOneWidget);
     expect(find.text('State'), findsOneWidget);
     expect(find.text('Command'), findsOneWidget);
+  });
+
+  testWidgets('帮助 → 使用说明：点开直接读文档 (不再指向开发文档)', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          deviceListProvider.overrideWith(
+            () => DeviceListController(devicesRoot: root),
+          ),
+        ],
+        child: const StudioApp(),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('帮助'));
+    await tester.pumpAndSettle();
+    expect(find.text('关于 Device Studio'), findsOneWidget); // 原有项保留
+    expect(find.text('快速上手文档'), findsNothing); // 只删这一项
+    await tester.tap(find.text('使用说明'));
+    await tester.pumpAndSettle();
+
+    // 文档随应用打包，点开即可读 (不是只显示一个路径)
+    expect(find.textContaining('Device Studio 使用文档'), findsWidgets);
+    expect(find.textContaining('打包时压缩图片'), findsWidgets);
+
+    await tester.tap(find.text('关闭'));
+    await tester.pumpAndSettle();
+    expect(find.text('关闭'), findsNothing);
   });
 }

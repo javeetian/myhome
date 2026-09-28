@@ -21,6 +21,7 @@ import 'opened_files_controller.dart';
 import 'source_editor.dart';
 import 'split_pane.dart';
 import 'studio_controller.dart';
+import 'studio_settings.dart';
 
 /// Device Studio 主页面 (WORK_V3 §22/§30)：
 /// 四栏布局 —— 设备列表 | 文件树 | UI 预览 + Protocol Console | Inspector。
@@ -238,6 +239,18 @@ class _StudioMenuBar extends ConsumerWidget {
                   ],
                 ),
                 _MenuButton(
+                  label: '设置',
+                  entries: <(String, VoidCallback?)>[
+                    (
+                      '偏好设置…',
+                      () => showDialog<void>(
+                        context: context,
+                        builder: (context) => const _StudioSettingsDialog(),
+                      ),
+                    ),
+                  ],
+                ),
+                _MenuButton(
                   label: '帮助',
                   entries: <(String, VoidCallback?)>[
                     (
@@ -248,22 +261,15 @@ class _StudioMenuBar extends ConsumerWidget {
                           applicationName: 'Device Studio',
                           applicationVersion: 'V3',
                           applicationLegalese:
-                              'Device UI Platform — 设备 UI 开发平台\n'
-                              '文档: docs/QUICKSTART.md',
+                              'Device UI Platform — 设备 UI 开发平台\n',
                         ),
                       ),
                     ),
                     (
-                      '快速上手文档',
+                      '使用说明',
                       () => showDialog<void>(
                         context: context,
-                        builder: (context) => const AlertDialog(
-                          title: Text('快速上手'),
-                          content: Text(
-                            'docs/QUICKSTART.md\n'
-                            '跑 Studio / 设计 UI / 生成固件代码',
-                          ),
-                        ),
+                        builder: (context) => const _UserGuideDialog(),
                       ),
                     ),
                   ],
@@ -339,6 +345,154 @@ class _StudioMenuBar extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+/// 偏好设置对话框 (设置菜单)。设置项与字体/Console 开关一样存内存，重启还原。
+class _StudioSettingsDialog extends ConsumerWidget {
+  const _StudioSettingsDialog();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final compress = ref.watch(compressUiImagesProvider);
+    return AlertDialog(
+      title: const Text('偏好设置'),
+      content: SizedBox(
+        width: 430,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            SwitchListTile(
+              value: compress,
+              onChanged: (_) =>
+                  ref.read(compressUiImagesProvider.notifier).toggle(),
+              title: const Text('打包时压缩图片'),
+              subtitle: const Text(
+                '把 ui.pkg 里的 PNG 量化到 256 色以内：照片级渲染图通常省 50–70%，'
+                '画质明显变差的图会跳过不压。只影响打包结果，源文件不动。',
+              ),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 使用说明 (菜单栏「使用说明」)：把 docs/使用文档.md 渲染成可读视图，点开即读。
+///
+/// 文档随应用打包 (pubspec 的 assets 段)，发布包里也能打开；仓库里是同一份，
+/// 改一处即可。渲染只认文档里实际用到的 Markdown：标题 / 代码块 / 行内 `代码` 与 **加粗**。
+class _UserGuideDialog extends StatelessWidget {
+  const _UserGuideDialog();
+
+  static const String assetPath = 'docs/使用文档.md';
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('使用说明'),
+      content: SizedBox(
+        width: 760,
+        height: 540,
+        child: FutureBuilder<String>(
+          future: rootBundle.loadString(assetPath),
+          builder: (context, snapshot) {
+            final text = snapshot.data;
+            if (text == null) {
+              return Center(
+                child: snapshot.hasError
+                    ? Text('读取 $assetPath 失败: ${snapshot.error}')
+                    : const CircularProgressIndicator(),
+              );
+            }
+            return Scrollbar(
+              child: SingleChildScrollView(
+                child: SelectableText.rich(_markdownToSpan(text)),
+              ),
+            );
+          },
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+      ],
+    );
+  }
+
+  /// 极简 Markdown → TextSpan。
+  static TextSpan _markdownToSpan(String markdown) {
+    const body = TextStyle(fontSize: 13, height: 1.5);
+    final h1 = body.copyWith(fontSize: 18, fontWeight: FontWeight.bold);
+    final h2 = body.copyWith(fontSize: 15, fontWeight: FontWeight.bold);
+    const code = TextStyle(
+      fontFamily: 'monospace',
+      fontSize: 12.5,
+      height: 1.4,
+      backgroundColor: Color(0x14000000),
+    );
+    final heading = RegExp(r'^(#{1,3}) (.*)$');
+    final spans = <TextSpan>[];
+    var inFence = false;
+    for (final line in const LineSplitter().convert(markdown)) {
+      if (line.trimLeft().startsWith('```')) {
+        inFence = !inFence;
+        continue;
+      }
+      if (inFence) {
+        spans.add(TextSpan(text: '$line\n', style: code));
+        continue;
+      }
+      final match = heading.firstMatch(line);
+      if (match == null) {
+        spans.add(_inline('$line\n', body, code));
+      } else {
+        final level = match.group(1)!.length;
+        spans.add(
+          TextSpan(
+            text: '${match.group(2)}\n',
+            style: level == 1 ? h1 : h2,
+          ),
+        );
+      }
+    }
+    return TextSpan(style: body, children: spans);
+  }
+
+  /// 行内 `` `代码` `` 与 **加粗**。
+  static TextSpan _inline(String line, TextStyle body, TextStyle code) {
+    final spans = <TextSpan>[];
+    final pattern = RegExp(r'`([^`]*)`|\*\*([^*]*)\*\*');
+    var index = 0;
+    for (final match in pattern.allMatches(line)) {
+      if (match.start > index) {
+        spans.add(TextSpan(text: line.substring(index, match.start)));
+      }
+      spans.add(
+        match.group(1) != null
+            ? TextSpan(text: match.group(1), style: code)
+            : TextSpan(
+                text: match.group(2),
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+      );
+      index = match.end;
+    }
+    if (index < line.length) {
+      spans.add(TextSpan(text: line.substring(index)));
+    }
+    return TextSpan(style: body, children: spans);
   }
 }
 

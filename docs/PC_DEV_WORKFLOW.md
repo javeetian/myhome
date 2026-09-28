@@ -34,7 +34,7 @@
 
 | 能力 | 位置 | 说明 |
 |---|---|---|
-| ui.pkg 打包/解包 | lib/ui_runtime/ui_package.dart | tar.gz，字节确定性（可复现构建） |
+| ui.pkg 打包/解包 | lib/ui_runtime/ui_package.dart | tar.gz，字节确定性（可复现构建）；`.uipkgignore` 可排除只给开发用的文件、打包时可顺带量化压缩 PNG（Studio 偏好设置默认开），见 `sdk/device/README.md` §ui.pkg 瘦身 |
 | 完整协议栈 | lib/protocol/* | Frame/CRC16/Fragment/ACK/重试/全消息类型，193 个测试覆盖 |
 | 模拟设备 | lib/device/demo_device.dart | HELLO/RESOURCE/STATE/PING/命令 全协议行为参考实现 |
 | App 侧 UI Runtime | lib/ui_runtime/* | manifest→缓存→ui.pkg→本地服务器→deviceApi 注入 |

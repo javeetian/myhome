@@ -42,8 +42,10 @@ void _usage() {
   stderr.writeln('用法:');
   stderr.writeln('  device validate <device.yaml>         校验设备定义 (Phase 2)');
   stderr.writeln('  device ui build <ui目录> [输出]       打包 UI 目录为 ui.pkg (Phase 13)');
+  stderr.writeln('      --compress-images                 顺带做 PNG 调色板量化 (同 Studio 偏好设置)');
   stderr.writeln('  device ui validate <ui.pkg>           校验 ui.pkg (Phase 14)');
   stderr.writeln('  device generate <device.yaml> [目录]  生成多端代码 (Phase 25)');
+  stderr.writeln('  (ui 目录里的 .uipkgignore 可排除只给开发用的文件，见 lib/ui_runtime/ui_package.dart)');
 }
 
 /// Phase 2：设备定义校验。
@@ -98,20 +100,23 @@ Future<int> _uiCommand(List<String> args) async {
 
 /// Phase 37：监听 UI 源目录 → 自动重打包 (配合 Studio 自动重载)。
 Future<int> _uiWatch(List<String> args) async {
-  if (args.isEmpty) {
-    stderr.writeln('用法: device ui watch <ui目录> [输出.ui.pkg]');
+  final compress = args.contains('--compress-images');
+  final rest = args.where((a) => a != '--compress-images').toList();
+  if (rest.isEmpty) {
+    stderr.writeln('用法: device ui watch <ui目录> [输出.ui.pkg] [--compress-images]');
     return 2;
   }
-  final sourceDir = args[0];
-  final outPath = args.length > 1
-      ? args[1]
+  final sourceDir = rest[0];
+  final outPath = rest.length > 1
+      ? rest[1]
       : p.join(p.dirname(sourceDir), 'build', 'ui.pkg');
   if (!Directory(sourceDir).existsSync()) {
     stderr.writeln('ERROR: UI 目录不存在: $sourceDir');
     return 1;
   }
   stdout.writeln('WATCH: $sourceDir → $outPath (Ctrl+C 退出)');
-  var exitCode = await _uiBuildOnce(sourceDir, outPath);
+  var exitCode =
+      await _uiBuildOnce(sourceDir, outPath, compressImages: compress);
   if (exitCode != 0) {
     return exitCode;
   }
@@ -123,7 +128,8 @@ Future<int> _uiWatch(List<String> args) async {
     stdout.writeln(
       '${DateTime.now().toIso8601String()} changed: $name → 重新打包',
     );
-    exitCode = await _uiBuildOnce(sourceDir, outPath);
+    exitCode =
+        await _uiBuildOnce(sourceDir, outPath, compressImages: compress);
     if (exitCode != 0) {
       stderr.writeln('WARN: 打包失败，继续监听…');
     }
@@ -132,16 +138,16 @@ Future<int> _uiWatch(List<String> args) async {
 }
 
 /// 构建一次：目录 → ui.pkg。返回退出码。
-Future<int> _uiBuildOnce(String sourceDir, String outPath) async {
-  final files = <String, Uint8List>{};
-  for (final entity in Directory(sourceDir).listSync(recursive: true)) {
-    if (entity is! File) {
-      continue;
-    }
-    final rel =
-        p.relative(entity.path, from: sourceDir).replaceAll('\\', '/');
-    files[rel] = Uint8List.fromList(entity.readAsBytesSync());
-  }
+Future<int> _uiBuildOnce(
+  String sourceDir,
+  String outPath, {
+  bool compressImages = false,
+}) async {
+  final collected = UiPackageSource.collect(
+    Directory(sourceDir),
+    compressImages: compressImages,
+  );
+  final files = collected.files;
   if (!files.containsKey('manifest.json')) {
     stderr.writeln('ERROR: UI 目录缺少 manifest.json');
     return 1;
@@ -164,7 +170,9 @@ Future<int> _uiBuildOnce(String sourceDir, String outPath) async {
   outFile.parent.createSync(recursive: true);
   outFile.writeAsBytesSync(pkg);
   stdout.writeln(
-    'PASS: ui.pkg ($outPath) ${pkg.length} bytes, ${files.length} files, '
+    'PASS: ui.pkg ($outPath) ${pkg.length} bytes, ${files.length} files'
+    '${collected.skipped.isEmpty ? '' : ', skipped ${collected.skipped.length} by .uipkgignore'}'
+    '${collected.compressedCount == 0 ? '' : ', compressed ${collected.compressedCount} images (-${(collected.savedBytes / 1024).toStringAsFixed(1)} KB)'}, '
     'version=${manifest.uiVersion}, sha256=${sha256.convert(pkg).toString().substring(0, 16)}...',
   );
   return 0;
@@ -207,21 +215,23 @@ Future<int> _generateCommand(List<String> args) async {
   return 0;
 }
 
-/// Phase 13：目录 → ui.pkg。
+/// Phase 13：目录 → ui.pkg。`--compress-images` = PNG 调色板量化 (同 Studio 设置)。
 Future<int> _uiBuild(List<String> args) async {
-  if (args.isEmpty) {
-    stderr.writeln('用法: device ui build <ui目录> [输出.ui.pkg]');
+  final compress = args.contains('--compress-images');
+  final rest = args.where((a) => a != '--compress-images').toList();
+  if (rest.isEmpty) {
+    stderr.writeln('用法: device ui build <ui目录> [输出.ui.pkg] [--compress-images]');
     return 2;
   }
-  final sourceDir = args[0];
+  final sourceDir = rest[0];
   if (!Directory(sourceDir).existsSync()) {
     stderr.writeln('ERROR: UI 目录不存在: $sourceDir');
     return 1;
   }
-  final outPath = args.length > 1
-      ? args[1]
+  final outPath = rest.length > 1
+      ? rest[1]
       : p.join(p.dirname(sourceDir), 'build', 'ui.pkg');
-  return _uiBuildOnce(sourceDir, outPath);
+  return _uiBuildOnce(sourceDir, outPath, compressImages: compress);
 }
 
 /// Phase 14：ui.pkg 校验。

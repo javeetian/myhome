@@ -5,6 +5,10 @@
 `sdk/device/` 是**唯一源**：各 JieLi SDK 里的 `apps/myhome/framework/` 只是本目录的
 部署产物（拷贝），改了这里必须重跑部署脚本，否则 SDK 编译的还是旧代码。
 
+本目录**不随源码仓库发给用户**：Windows 安装包把它整份装到 `<安装目录>\samples\device_sdk\`
+（`dart run tools/pack_samples.dart` 在打包前摆进 Release 目录），用户照《使用文档》§7
+自己拷进设备 SDK；同一个 `samples\` 里还有完整示例工程 `light1\`。
+
 ## 目录
 
 ```text
@@ -80,6 +84,63 @@ sdk/device/build_test.bat      # 需 VS2022+，输出 ALL PASS
 ```
 
 golden 向量由 Dart 实现生成，改 Dart 协议后要重新生成并同步 C 测试。
+
+## ui.pkg 瘦身（`.uipkgignore`）
+
+UI 源目录里只对开发有用的文件——PC 预览脚本、PWA 装桌面的大图标、设计笔记——
+默认也会被打进 ui.pkg，白白占固件 flash 和 BLE 下载时间（设备端 WebView 从不请求它们）。
+在 UI 目录放一份 `.uipkgignore` 就能把它们挡在包外，源目录文件原样保留
+（`serve.py` 扫码预览 / PWA 安装流程不受影响）：
+
+```text
+# 一行一个模式；`#` 注释；结尾 `/` 表示整个目录；
+# 不含 `/` 的模式匹配任意层级的同名文件；`*` 不跨 `/`
+icons/icon-1024.png      # 726 KB，无任何引用
+icons/icon-512.png       # 236 KB，仅 PWA 安装
+icons/maskable-512.png   # 137 KB，仅 PWA 安装
+manifest.webmanifest
+sw.js
+serve.py
+*.txt
+```
+
+三个打包入口（Studio「运行→生成代码」/ UI 热重载 / `device ui build` CLI）共用同一份
+收集逻辑（`lib/ui_runtime/ui_package.dart` 的 `UiPackageSource`），清单文件本身永不进包。
+
+**图片压缩**：UI 里的图标/渲染图是照片级渐变，PNG 无损压缩已经压不动
+（`icon-192.png` 37 KB，无损只到 35 KB），但它们**调色板友好**——量化到 256 色以内
+通常省 50–70%。Studio 默认就压：**设置 → 偏好设置… → 打包时压缩图片**（默认开；
+命令行对应 `device ui build … --compress-images`）。纯 Dart 实现
+（`lib/ui_runtime/ui_image_optimizer.dart`，依赖 `package:image`），不用装任何外部工具。
+
+规则：
+
+- 只压 PNG，且只替换**打包结果**的字节，源文件不动；解不动、压不小都原样放行；
+- 带透明像素的图跳过（`quantize` 会丢 alpha）；已经是调色板的 PNG 不再二次量化；
+- 色数 64 → 128 → 256 依次试，**画质过关就早停**（逐像素平均误差 ≤2/255 视为看不出，
+  照片兜底 ≤4/255），免得渐变起色带。
+
+实测 light2 的 `icon-192.png`：37 KB → **12 KB**（64 色，平均误差 1.3/255，观感与下面
+Pillow 版一致），整包 73 KB → 47 KB。
+
+**想再榨几 KB**（可选，要 Python + Pillow）：Pillow 的 FASTOCTREE + Floyd-Steinberg
+在同样观感下只要 **7 KB**（它把颜色收敛到 ~90 种，索引场熵低得多），手头有 Pillow 就
+给图标跑一遍。Studio 打包会跳过已经是调色板的它，不会二次量化：
+
+```python
+# pip install pillow；对 icons/icon-192.png 原地重编码
+from PIL import Image
+img = Image.open('icons/icon-192.png').convert('RGB')
+img.quantize(colors=256, method=Image.Quantize.FASTOCTREE,
+             dither=Image.Dither.FLOYDSTEINBERG).save(
+                 'icons/icon-192.png', optimize=True)
+```
+
+`<link rel="apple-touch-icon">` 直接指 `icons/icon-192.png`（iOS 自己缩放），省一份 33 KB。
+
+实测：light2 的 ui.pkg **1.21 MB → 107 KB（.uipkgignore）→ 41 KB（再手工重编码图标
+7 KB）/ 47 KB（只用 Studio 内建压缩）**，包里只剩 6 个文件（index.html / css / js /
+manifest.json / favicon.ico / icon-192.png）；BLE 分块下载从 2368 块降到 81 块。
 
 ## 部署与移植
 
